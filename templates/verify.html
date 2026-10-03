@@ -1,0 +1,31 @@
+{% extends 'base.html' %} {% block title %}Verify account{% endblock %} {% block
+content %}
+<section class="status-page verify-page">
+  <div class="status-number">02 / VERIFY YOUR EMAIL</div>
+  <div class="status-icon" aria-hidden="true">✳</div>
+  <p class="eyebrow">A PRIVATE CHECK</p>
+  <h1>Enter your<br />six-digit code.</h1>
+  <p class="status-copy">
+    We sent a one-time code to <strong>{{ email }}</strong>. It expires in 15
+    minutes.
+  </p>
+  <form class="verify-form" method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+    <label class="visually-hidden" for="code">Verification code</label>
+    <input
+      id="code"
+      name="code"
+      inputmode="numeric"
+      autocomplete="one-time-code"
+      pattern="[0-9]{1,6}"
+      maxlength="6"
+      placeholder="000000"
+      required
+      autofocus
+    />
+    <button class="button button-primary" type="submit">
+      Unlock my ledger <span aria-hidden="true">→</span>
+    </button>
+  </form>
+</section>
+{% endblock %}

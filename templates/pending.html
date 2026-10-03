@@ -1,0 +1,27 @@
+{% extends 'base.html' %} {% block title %}Account review{% endblock %} {% block
+content %}
+<section class="status-page">
+  <div class="status-number">01 / ACCOUNT SETUP</div>
+  <div class="status-icon" aria-hidden="true">
+    {% if approved %}✉{% else %}◷{% endif %}
+  </div>
+  <p class="eyebrow">
+    {% if approved %}ONE LAST STEP{% else %}UNDER REVIEW{% endif %}
+  </p>
+  <h1>
+    {% if approved %}Your account is approved.{% else %}Your ledger is<br />almost
+    ready.{% endif %}
+  </h1>
+  <p class="status-copy">
+    {% if approved %}An administrator approved your account. Enter the one-time
+    code from your email to unlock your private ledger.{% else %}Your account is
+    waiting for administrator approval. Once approved, a one-time code will be
+    sent to your email.{% endif %}
+  </p>
+  {% if approved %}<a
+    class="button button-primary"
+    href="{{ url_for('verify') }}"
+    >Enter verification code <span aria-hidden="true">→</span></a
+  >{% endif %}
+</section>
+{% endblock %}

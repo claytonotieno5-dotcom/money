@@ -1,0 +1,192 @@
+{% extends 'base.html' %} {% block title %}{{ user.name }}'s ledger{% endblock
+%} {% block content %}
+<div class="dashboard-shell" id="dashboard" data-name="{{ user.name }}">
+  <section class="page-heading">
+    <div>
+      <p class="eyebrow">{{ user.name }} · YOUR PERSONAL LEDGER</p>
+      <h1>Good money starts<br />with <em>knowing.</em></h1>
+    </div>
+    <a
+      class="button button-outline"
+      href="{{ url_for('export_csv') }}"
+      title="Download your transaction history as CSV"
+      ><span aria-hidden="true">↓</span> Export ledger</a
+    >
+  </section>
+  <section class="summary-grid" aria-label="Account totals">
+    <article class="summary-cell">
+      <span class="summary-label">MONEY RECEIVED</span
+      ><strong id="total-received">—</strong
+      ><span class="summary-caption">All recorded income</span>
+    </article>
+    <article class="summary-cell">
+      <span class="summary-label">MONEY USED</span
+      ><strong id="total-spent">—</strong
+      ><span class="summary-caption">All recorded spending</span>
+    </article>
+    <article class="summary-cell summary-balance">
+      <span class="summary-label">AVAILABLE BALANCE</span
+      ><strong id="total-balance">—</strong
+      ><span class="summary-caption">Received minus used</span>
+    </article>
+  </section>
+  <section class="budget-strip" aria-label="Monthly budget">
+    <div>
+      <p class="eyebrow">MONTHLY SPENDING PLAN</p>
+      <strong id="budget-message">Set a monthly budget to get started.</strong>
+    </div>
+    <div class="budget-track" aria-label="Monthly budget progress">
+      <span id="budget-progress"></span>
+    </div>
+    <form class="budget-form" id="budget-form">
+      <label class="visually-hidden" for="budget-amount"
+        >Monthly budget in Kenyan shillings</label
+      ><input
+        id="budget-amount"
+        type="number"
+        min="1"
+        step="0.01"
+        placeholder="Set budget"
+        required
+      /><button
+        class="icon-button"
+        type="submit"
+        title="Save monthly budget"
+        aria-label="Save monthly budget"
+      >
+        ↗
+      </button>
+    </form>
+  </section>
+  <div class="workspace-grid">
+    <section class="entry-panel">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">ADD TO YOUR LEDGER</p>
+          <h2>What happened?</h2>
+        </div>
+        <span class="entry-index">01</span>
+      </div>
+      <form id="transaction-form" class="form-stack">
+        <div class="segmented" role="group" aria-label="Transaction type">
+          <button
+            type="button"
+            class="segment is-selected"
+            data-direction="received"
+            aria-pressed="true"
+          >
+            Received
+          </button>
+          <button
+            type="button"
+            class="segment"
+            data-direction="used"
+            aria-pressed="false"
+          >
+            Used
+          </button>
+        </div>
+        <input type="hidden" id="direction" value="received" />
+        <label
+          >Amount <span class="label-hint">KES</span
+          ><input
+            id="amount"
+            type="number"
+            min="0.01"
+            step="0.01"
+            placeholder="0.00"
+            required
+        /></label>
+        <label
+          >Purpose<input
+            id="purpose"
+            type="text"
+            maxlength="120"
+            placeholder="e.g. Transport, stipend, groceries"
+            required
+        /></label>
+        <button class="button button-primary" type="submit">
+          Add transaction <span aria-hidden="true">＋</span>
+        </button>
+        <p class="form-note">
+          Your entry is timestamped and visible only to you.
+        </p>
+      </form>
+    </section>
+    <section class="insight-panel">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">WHERE IT GOES</p>
+          <h2>Spending by purpose</h2>
+        </div>
+        <span class="entry-index">02</span>
+      </div>
+      <div class="chart-wrap chart-donut-wrap">
+        <canvas
+          id="purpose-chart"
+          aria-label="Spending by purpose chart"
+        ></canvas>
+        <p id="purpose-empty" class="chart-empty">
+          Add a spending entry to see your breakdown.
+        </p>
+      </div>
+      <ul class="chart-legend" id="purpose-legend"></ul>
+    </section>
+    <section class="insight-panel trend-panel">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">SIX-MONTH VIEW</p>
+          <h2>Money over time</h2>
+        </div>
+        <span class="entry-index">03</span>
+      </div>
+      <div class="chart-wrap chart-bars-wrap">
+        <canvas
+          id="trend-chart"
+          aria-label="Monthly money received and used chart"
+        ></canvas>
+        <p id="trend-empty" class="chart-empty">
+          Your monthly trend will appear here.
+        </p>
+      </div>
+      <div class="chart-key">
+        <span><i class="key-received"></i> Received</span
+        ><span><i class="key-used"></i> Used</span>
+      </div>
+    </section>
+    <section class="ledger-panel">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">YOUR ACTIVITY</p>
+          <h2>Recent transactions</h2>
+        </div>
+        <span class="entry-index">04</span>
+      </div>
+      <div class="table-scroll">
+        <table class="ledger-table">
+          <thead>
+            <tr>
+              <th>TYPE</th>
+              <th>PURPOSE</th>
+              <th>DATE &amp; TIME</th>
+              <th class="amount-col">AMOUNT</th>
+            </tr>
+          </thead>
+          <tbody id="transaction-rows">
+            <tr>
+              <td colspan="4" class="empty-row">
+                Your first entry will show up here.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="table-note">
+        Showing your latest 100 entries · Times shown in your local timezone
+      </p>
+    </section>
+  </div>
+</div>
+{% endblock %} {% block scripts %}
+<script src="{{ url_for('static', filename='dashboard.js') }}" defer></script>
+{% endblock %}

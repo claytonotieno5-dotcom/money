@@ -1,0 +1,136 @@
+{% extends 'base.html' %} {% block title %}Admin overview{% endblock %} {% block
+content %}
+<div class="dashboard-shell admin-shell">
+  <section class="page-heading">
+    <div>
+      <p class="eyebrow">ADMINISTRATOR VIEW · PRIVATE</p>
+      <h1>People &amp;<br /><em>their progress.</em></h1>
+    </div>
+    <div class="admin-count">
+      <strong>{{ users|length }}</strong><span>registered accounts</span>
+    </div>
+  </section>
+  <section class="admin-notice">
+    <span class="stamp-dot"></span> Individual transaction details remain
+    private. This view shows account totals and approval status.
+  </section>
+  <section class="admin-table-panel">
+    <div class="section-heading">
+      <div>
+        <p class="eyebrow">ACCOUNT MANAGEMENT</p>
+        <h2>All personal accounts</h2>
+      </div>
+    </div>
+    <div class="table-scroll">
+      <table class="ledger-table admin-table">
+        <thead>
+          <tr>
+            <th>PERSON</th>
+            <th>STATUS</th>
+            <th>MONEY RECEIVED</th>
+            <th>MONEY USED</th>
+            <th>JOINED</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for user in users %}
+          <tr>
+            <td>
+              <strong>{{ user.name }}</strong
+              ><span class="table-subtext"
+                >{{ user.username }} · {{ user.email }}</span
+              >
+            </td>
+            <td>
+              {% if user.verified %}<span class="status-badge status-active"
+                >Verified</span
+              >{% elif user.approved %}<span class="status-badge status-code"
+                >Code sent</span
+              >{% else %}<span class="status-badge status-pending"
+                >Awaiting approval</span
+              >{% endif %}
+            </td>
+            <td class="money-positive">
+              KSh {{ '%.2f'|format(user.received / 100) }}
+            </td>
+            <td class="money-negative">
+              KSh {{ '%.2f'|format(user.spent / 100) }}
+            </td>
+            <td>{{ user.created_at[:10] }}</td>
+            <td>
+              {% if not user.verified %}
+              <form
+                method="post"
+                action="{{ url_for('approve_user', user_id=user.id) }}"
+              >
+                <input
+                  type="hidden"
+                  name="csrf_token"
+                  value="{{ csrf_token }}"
+                /><button
+                  class="button button-small {% if user.approved %}button-outline{% else %}button-primary{% endif %}"
+                  type="submit"
+                >
+                  {% if user.approved %}Resend code{% else %}Approve &amp; send
+                  code{% endif %}
+                </button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+          <tr class="admin-detail-row">
+            <td colspan="6">
+              <details>
+                <summary>
+                  View {{ user.transactions|length }} transaction{% if
+                  user.transactions|length != 1 %}s{% endif %} and purposes
+                </summary>
+                {% if user.transactions %}
+                <div class="table-scroll">
+                  <table class="ledger-table detail-table">
+                    <thead>
+                      <tr>
+                        <th>TYPE</th>
+                        <th>PURPOSE</th>
+                        <th>RECORDED (UTC)</th>
+                        <th class="amount-col">AMOUNT</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for transaction in user.transactions %}
+                      <tr>
+                        <td>
+                          {{ 'Received' if transaction.direction == 'received'
+                          else 'Used' }}
+                        </td>
+                        <td>{{ transaction.purpose }}</td>
+                        <td>{{ transaction.created_at }}</td>
+                        <td class="amount-col">
+                          KSh {{ '%.2f'|format(transaction.amount_cents / 100)
+                          }}
+                        </td>
+                      </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+                {% else %}
+                <p class="table-note">No transactions recorded.</p>
+                {% endif %}
+              </details>
+            </td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="6" class="empty-row">
+              No accounts yet. New registrations will appear here.
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+{% endblock %}

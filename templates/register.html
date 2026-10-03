@@ -1,0 +1,62 @@
+{% extends 'base.html' %} {% block title %}Create account{% endblock %} {% block
+content %}
+<section class="auth-layout auth-layout-register">
+  <div class="auth-copy">
+    <p class="eyebrow">A BETTER MONEY HABIT STARTS HERE</p>
+    <h1>Know your<br />numbers. <em>Own them.</em></h1>
+    <p class="auth-intro">
+      Your ledger belongs to you. An administrator must approve new accounts
+      before you can start tracking.
+    </p>
+    <div class="auth-stamp">
+      <span class="stamp-dot"></span> One account, one owner
+      <span class="stamp-rule"></span> Always yours
+    </div>
+  </div>
+  <div class="auth-panel">
+    <p class="eyebrow">GET STARTED</p>
+    <h2>Create account</h2>
+    <form method="post" class="form-stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <label
+        >Full name<input
+          name="name"
+          autocomplete="name"
+          maxlength="100"
+          required
+          autofocus
+      /></label>
+      <label
+        >Username<input
+          name="username"
+          autocomplete="username"
+          maxlength="80"
+          required
+      /></label>
+      <label
+        >Email for verification<input
+          type="email"
+          name="email"
+          autocomplete="email"
+          maxlength="254"
+          required
+      /></label>
+      <label
+        >Password <span class="label-hint">10 characters minimum</span
+        ><input
+          type="password"
+          name="password"
+          autocomplete="new-password"
+          minlength="10"
+          required
+      /></label>
+      <button class="button button-primary" type="submit">
+        Request an account <span aria-hidden="true">→</span>
+      </button>
+    </form>
+    <p class="auth-switch">
+      Already have an account? <a href="{{ url_for('login') }}">Sign in</a>
+    </p>
+  </div>
+</section>
+{% endblock %}

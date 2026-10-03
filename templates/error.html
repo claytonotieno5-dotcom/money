@@ -1,0 +1,13 @@
+{% extends 'base.html' %} {% block title %}{{ title }}{% endblock %} {% block
+content %}
+<section class="status-page">
+  <div class="status-number">MONEYLINE / ACCESS CONTROL</div>
+  <div class="status-icon" aria-hidden="true">×</div>
+  <p class="eyebrow">{{ title|upper }}</p>
+  <h1>That page isn't<br />yours to open.</h1>
+  <p class="status-copy">{{ message }}</p>
+  <a class="button button-primary" href="{{ url_for('index') }}"
+    >Back to my account <span aria-hidden="true">→</span></a
+  >
+</section>
+{% endblock %}

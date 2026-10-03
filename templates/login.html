@@ -1,0 +1,44 @@
+{% extends 'base.html' %} {% block title %}Sign in{% endblock %} {% block
+content %}
+<section class="auth-layout">
+  <div class="auth-copy">
+    <p class="eyebrow">YOUR MONEY, IN FOCUS</p>
+    <h1>Make every<br />shilling <em>count.</em></h1>
+    <p class="auth-intro">
+      A clearer picture of what comes in, what goes out, and what matters most.
+    </p>
+    <div class="auth-stamp">
+      <span class="stamp-dot"></span> Private by design
+      <span class="stamp-rule"></span> Built for real life
+    </div>
+  </div>
+  <div class="auth-panel">
+    <p class="eyebrow">WELCOME BACK</p>
+    <h2>Sign in</h2>
+    <form method="post" class="form-stack">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <label
+        >Username<input
+          name="username"
+          autocomplete="username"
+          required
+          autofocus
+      /></label>
+      <label
+        >Password<input
+          type="password"
+          name="password"
+          autocomplete="current-password"
+          required
+      /></label>
+      <button class="button button-primary" type="submit">
+        Open my ledger <span aria-hidden="true">→</span>
+      </button>
+    </form>
+    <p class="auth-switch">
+      New to Moneyline?
+      <a href="{{ url_for('register') }}">Create an account</a>
+    </p>
+  </div>
+</section>
+{% endblock %}
