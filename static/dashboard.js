@@ -5,7 +5,7 @@ if (dashboard) {
   const money = cents => new Intl.NumberFormat("en-KE", {
     style: "currency", currency: "KES", minimumFractionDigits: 2
   }).format(cents / 100);
-  const colors = ["#167c67", "#e3a64b", "#3975a7", "#d46c56", "#8a8c58", "#7a6899", "#4d9b94"];
+  const colors = ["#c9f36b", "#f2b85d", "#ff8874", "#6dd6b2", "#e889b5", "#c0a1e8", "#a6d96a"];
   const rows = document.querySelector("#transaction-rows");
   let summary;
 
@@ -60,12 +60,12 @@ if (dashboard) {
       legendRow.append(swatch, label, value);
       legend.append(legendRow);
     });
-    context.fillStyle = "#172f2a";
-    context.font = "600 13px 'DM Sans', sans-serif";
+    context.fillStyle = "#e5ecd7";
+    context.font = "700 13px 'Manrope', sans-serif";
     context.textAlign = "center";
     context.textBaseline = "middle";
     context.fillText("TOTAL USED", centerX, centerY - 9);
-    context.font = "500 15px 'DM Mono', monospace";
+    context.font = "500 15px 'IBM Plex Mono', monospace";
     context.fillText(money(total), centerX, centerY + 13);
     if (items.length > 8) {
       const extra = items.slice(8).reduce((sum, item) => sum + item.total, 0);
@@ -108,7 +108,7 @@ if (dashboard) {
     const groupWidth = width / series.length;
     const barWidth = Math.min(16, groupWidth * 0.24);
 
-    context.strokeStyle = "#e6e4db";
+    context.strokeStyle = "#35443a";
     context.lineWidth = 1;
     for (let line = 0; line < 4; line += 1) {
       const y = top + plotHeight * line / 3;
@@ -125,8 +125,8 @@ if (dashboard) {
       context.fillRect(center - barWidth - 2, bottom - receivedHeight, barWidth, receivedHeight);
       context.fillStyle = colors[1];
       context.fillRect(center + 2, bottom - usedHeight, barWidth, usedHeight);
-      context.fillStyle = "#66716c";
-      context.font = "11px 'DM Sans', sans-serif";
+      context.fillStyle = "#a3af9a";
+      context.font = "11px 'Manrope', sans-serif";
       context.textAlign = "center";
       context.fillText(item.label, center, height - 7);
     });

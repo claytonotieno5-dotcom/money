@@ -1,9 +1,15 @@
 import csv
+import hashlib
+import hmac
 import io
+import json
 import os
 import secrets
 import smtplib
 import sqlite3
+import time
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from email.message import EmailMessage
@@ -23,6 +29,10 @@ from flask import (
     url_for,
 )
 from werkzeug.security import check_password_hash, generate_password_hash
+import psycopg
+from psycopg.rows import dict_row
+
+DATABASE_INTEGRITY_ERRORS = (sqlite3.IntegrityError, psycopg.IntegrityError)
 
 
 def create_app(test_config=None):
@@ -30,12 +40,15 @@ def create_app(test_config=None):
     app.config.update(
         SECRET_KEY=os.environ.get("SECRET_KEY") or secrets.token_hex(32),
         DATABASE=os.environ.get("DATABASE_PATH", "money_tracker.sqlite3"),
+        DATABASE_URL=os.environ.get("DATABASE_URL", ""),
         MAIL_MODE=os.environ.get("MAIL_MODE", "console"),
         MAIL_HOST=os.environ.get("MAIL_HOST", ""),
         MAIL_PORT=int(os.environ.get("MAIL_PORT", "587")),
         MAIL_USERNAME=os.environ.get("MAIL_USERNAME", ""),
         MAIL_PASSWORD=os.environ.get("MAIL_PASSWORD", ""),
         MAIL_FROM=os.environ.get("MAIL_FROM", ""),
+        MAIL_WEB_APP_URL=os.environ.get("MAIL_WEB_APP_URL", ""),
+        MAILER_SECRET=os.environ.get("MAILER_SECRET", ""),
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
         SESSION_COOKIE_SECURE=os.environ.get("COOKIE_SECURE", "0") == "1",
@@ -91,6 +104,37 @@ def create_app(test_config=None):
             app.logger.warning(
                 "Development verification code for %s: %s", recipient, code)
             return
+        if app.config["MAIL_MODE"] == "apps-script":
+            web_app_url = app.config["MAIL_WEB_APP_URL"]
+            secret = app.config["MAILER_SECRET"]
+            if not web_app_url or not secret:
+                raise RuntimeError(
+                    "Apps Script mail delivery is not configured.")
+            timestamp = str(int(time.time()))
+            payload = json.dumps(
+                {"to": recipient, "code": code, "timestamp": timestamp},
+                separators=(",", ":"),
+            )
+            signature = hmac.new(
+                secret.encode("utf-8"), payload.encode("utf-8"), hashlib.sha256
+            ).hexdigest()
+            body = json.dumps(
+                {"payload": payload, "signature": signature}).encode("utf-8")
+            mail_request = urllib.request.Request(
+                web_app_url,
+                data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(mail_request, timeout=15) as response:
+                    result = json.loads(response.read().decode("utf-8"))
+            except (OSError, json.JSONDecodeError) as error:
+                raise RuntimeError(
+                    "Apps Script mail delivery request failed.") from error
+            if not result.get("ok"):
+                raise RuntimeError("Apps Script did not accept the email.")
+            return
         required = ("MAIL_HOST", "MAIL_USERNAME", "MAIL_PASSWORD", "MAIL_FROM")
         if any(not app.config[key] for key in required):
             raise RuntimeError(
@@ -108,6 +152,13 @@ def create_app(test_config=None):
             server.login(app.config["MAIL_USERNAME"],
                          app.config["MAIL_PASSWORD"])
             server.send_message(message)
+
+    @app.get("/service-worker.js")
+    def service_worker():
+        response = app.send_static_file("service-worker.js")
+        response.headers["Service-Worker-Allowed"] = "/"
+        response.headers["Cache-Control"] = "no-cache"
+        return response
 
     @app.get("/")
     def index():
@@ -135,15 +186,16 @@ def create_app(test_config=None):
             else:
                 try:
                     cursor = get_db().execute(
-                        "INSERT INTO users (name, username, email, password_hash) VALUES (?, ?, ?, ?)",
+                        "INSERT INTO users (name, username, email, password_hash) VALUES (?, ?, ?, ?) RETURNING id",
                         (name, username, email, generate_password_hash(password)),
                     )
+                    new_user_id = cursor.fetchone()["id"]
                     get_db().commit()
-                except sqlite3.IntegrityError:
+                except DATABASE_INTEGRITY_ERRORS:
                     flash("That username or email is already registered.", "error")
                 else:
                     session.clear()
-                    session["user_id"] = cursor.lastrowid
+                    session["user_id"] = new_user_id
                     session["role"] = "user"
                     session["verified"] = False
                     session["csrf_token"] = secrets.token_urlsafe(32)
@@ -260,7 +312,7 @@ def create_app(test_config=None):
             (user_id,),
         ).fetchall()
         months = db.execute(
-            "SELECT strftime('%Y-%m', created_at) AS month, direction, SUM(amount_cents) AS total "
+            "SELECT substr(created_at, 1, 7) AS month, direction, SUM(amount_cents) AS total "
             "FROM transactions WHERE user_id = ? AND created_at >= ? GROUP BY month, direction ORDER BY month",
             (user_id, (datetime.now(timezone.utc) - timedelta(days=183)).isoformat()),
         ).fetchall()
@@ -272,9 +324,9 @@ def create_app(test_config=None):
             "SELECT monthly_budget_cents FROM users WHERE id = ?", (user_id,)).fetchone()
         current_month = datetime.now(timezone.utc).strftime("%Y-%m")
         monthly_spend = db.execute(
-            "SELECT COALESCE(SUM(amount_cents), 0) FROM transactions WHERE user_id = ? AND direction = 'used' AND strftime('%Y-%m', created_at) = ?",
+            "SELECT COALESCE(SUM(amount_cents), 0) AS total FROM transactions WHERE user_id = ? AND direction = 'used' AND substr(created_at, 1, 7) = ?",
             (user_id, current_month),
-        ).fetchone()[0]
+        ).fetchone()["total"]
         return jsonify(
             received=received,
             spent=spent,
@@ -397,8 +449,16 @@ def create_app(test_config=None):
             (generate_password_hash(code), expires.isoformat(), user_id),
         )
         db.commit()
-        flash(
-            f"Approved {user['name']}; a one-time code was sent to their email.", "success")
+        if app.config["MAIL_MODE"] == "console":
+            flash(
+                f"Approved {user['name']}. Local mode did not send email; use the code printed in the app server terminal.",
+                "success",
+            )
+        else:
+            flash(
+                f"Approved {user['name']}; the mail server accepted the verification email. Check spam or resend if it does not arrive.",
+                "success",
+            )
         return redirect(url_for("admin_dashboard"))
 
     @app.errorhandler(403)
@@ -414,25 +474,78 @@ def create_app(test_config=None):
 
 def get_db():
     if "db" not in g:
-        g.db = sqlite3.connect(current_app_config_database())
-        g.db.row_factory = sqlite3.Row
-        g.db.execute("PRAGMA foreign_keys = ON")
+        from flask import current_app
+
+        database_url = current_app.config.get("DATABASE_URL", "")
+        if database_url:
+            connection = psycopg.connect(
+                database_url, row_factory=dict_row, connect_timeout=10)
+            g.db = DatabaseConnection(connection, postgres=True)
+        else:
+            connection = sqlite3.connect(current_app.config["DATABASE"])
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA foreign_keys = ON")
+            g.db = DatabaseConnection(connection, postgres=False)
     return g.db
 
 
-def current_app_config_database():
-    from flask import current_app
+class DatabaseConnection:
+    def __init__(self, connection, postgres):
+        self.connection = connection
+        self.postgres = postgres
 
-    return current_app.config["DATABASE"]
+    def execute(self, statement, parameters=()):
+        if self.postgres:
+            statement = statement.replace("?", "%s")
+        return self.connection.execute(statement, parameters)
+
+    def commit(self):
+        self.connection.commit()
+
+    def close(self):
+        self.connection.close()
 
 
 def init_db():
-    db = sqlite3.connect(current_app_config_database())
-    try:
-        db.executescript(
-            """
-            PRAGMA foreign_keys = ON;
-            CREATE TABLE IF NOT EXISTS users (
+    from flask import current_app
+
+    database_url = current_app.config.get("DATABASE_URL", "")
+    if database_url:
+        connection = psycopg.connect(
+            database_url, row_factory=dict_row, connect_timeout=10)
+        db = DatabaseConnection(connection, postgres=True)
+        schema = (
+            """CREATE TABLE IF NOT EXISTS users (
+                id BIGSERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                username TEXT NOT NULL UNIQUE,
+                email TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
+                approved INTEGER NOT NULL DEFAULT 0,
+                verified INTEGER NOT NULL DEFAULT 0,
+                verification_hash TEXT,
+                verification_expires_at TEXT,
+                verification_attempts INTEGER NOT NULL DEFAULT 0,
+                monthly_budget_cents BIGINT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )""",
+            """CREATE TABLE IF NOT EXISTS transactions (
+                id BIGSERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                direction TEXT NOT NULL CHECK (direction IN ('received', 'used')),
+                amount_cents BIGINT NOT NULL CHECK (amount_cents > 0),
+                purpose TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )""",
+            "CREATE INDEX IF NOT EXISTS transactions_user_date ON transactions(user_id, created_at)",
+        )
+    else:
+        connection = sqlite3.connect(current_app.config["DATABASE"])
+        connection.execute("PRAGMA foreign_keys = ON")
+        db = DatabaseConnection(connection, postgres=False)
+        schema = (
+            """CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 username TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -446,18 +559,20 @@ def init_db():
                 verification_attempts INTEGER NOT NULL DEFAULT 0,
                 monthly_budget_cents INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-            );
-            CREATE TABLE IF NOT EXISTS transactions (
+            )""",
+            """CREATE TABLE IF NOT EXISTS transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                 direction TEXT NOT NULL CHECK (direction IN ('received', 'used')),
                 amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
                 purpose TEXT NOT NULL,
                 created_at TEXT NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS transactions_user_date ON transactions(user_id, created_at);
-            """
+            )""",
+            "CREATE INDEX IF NOT EXISTS transactions_user_date ON transactions(user_id, created_at)",
         )
+    try:
+        for statement in schema:
+            db.execute(statement)
         db.commit()
     finally:
         db.close()

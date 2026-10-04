@@ -30,12 +30,15 @@ For local development, `MAIL_MODE=console` writes verification codes to the serv
 - CSV export of a personal transaction history.
 - Administrator view of account status, totals, and per-account transaction details.
 
-## Deploy on Render
+## Free Live Pilot
 
-1. Push this project to a private GitHub repository. Keep `.env` files and SQLite database files out of Git.
-2. In Render, choose **New > Blueprint**, connect the repository, and apply the settings from `render.yaml`.
-3. Enter SMTP provider values when Render asks for `MAIL_HOST`, `MAIL_USERNAME`, `MAIL_PASSWORD`, and `MAIL_FROM`. Verification codes will not be delivered until these are configured correctly.
-4. After the service deploys, open its Shell and run `python init_admin.py` once. The blueprint sets `DATABASE_PATH` to the persistent disk, so the account will be created in the live database. Use a unique email and a password with at least 10 characters.
-5. Open the HTTPS URL Render assigns to the service.
+The zero-cost setup keeps Flask templates, the API, and the PWA together on Render Free, stores data in Neon Free PostgreSQL, and sends verification mail through Google Apps Script. It needs no custom domain. It is a pilot setup, not a high-availability production service.
 
-The blueprint uses a paid web-service plan because it attaches a persistent disk for the SQLite database. Do not remove that disk or deploy multiple app instances with this SQLite setup. Keep backups private; SQLite database files are not encrypted at rest. For larger deployments, migrate to a managed PostgreSQL database and add login throttling, password reset, monitoring, and a tested backup/restore process. Never expose Flask's development server directly to the public internet.
+1. Push the project to a private GitHub repository on `main`. `.gitignore` excludes SQLite databases and `.env` files; never commit connection strings or secrets.
+2. Create a free Neon project. Copy its pooled PostgreSQL connection string and keep it private.
+3. Create a Google Apps Script project. Paste in `google_apps_script_mailer.gs`. In **Project Settings > Script Properties**, add `MAILER_SECRET` with a random value generated locally using `python -c "import secrets; print(secrets.token_urlsafe(32))"`. Deploy as a web app that executes as you and allows access to **Anyone**. Keep the deployed `/exec` URL.
+4. In Render, choose **New > Blueprint**, connect the GitHub repository, and apply `render.yaml`. Supply the Neon connection string for `DATABASE_URL`, the Apps Script `/exec` URL for `MAIL_WEB_APP_URL`, and the same `MAILER_SECRET` value. Render generates `SECRET_KEY`.
+5. Render Free does not provide a service Shell. Create the live administrator from your computer by setting `DATABASE_URL` to the Neon connection string in a PowerShell session and running `python init_admin.py` once. The script initializes the schema and creates the admin in Neon. Remove `DATABASE_URL` from that shell when finished.
+6. Open the Render HTTPS URL. Test registration with an inbox you can access, approve the account as admin, verify the email code, then install the PWA from the browser.
+
+For a consumer Google account, Apps Script is limited to 100 email recipients per day. Render Free sleeps after 15 minutes without traffic and can take about a minute to wake. Neon Free currently includes 1 GB storage and 100 compute-unit hours per project monthly, and suspends idle compute after five minutes; its database data remains stored. Free-tier quotas and terms can change, and this setup has no production uptime guarantee or managed backups. Do not use it for sensitive financial records without keeping independent backups. For larger usage, upgrade to paid database/email services and load-test before inviting users.

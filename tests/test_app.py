@@ -1,9 +1,13 @@
 import logging
+import hashlib
+import hmac
+import json
 import os
 import re
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from werkzeug.security import generate_password_hash
 
@@ -18,6 +22,7 @@ class MoneylineTests(unittest.TestCase):
             "TESTING": True,
             "SECRET_KEY": "test-secret-key",
             "DATABASE": self.database,
+            "DATABASE_URL": "",
             "MAIL_MODE": "console",
         })
         self.admin = self.create_user(
@@ -48,6 +53,63 @@ class MoneylineTests(unittest.TestCase):
             user_session["verified"] = verified
             user_session["csrf_token"] = "test-csrf-token"
 
+    def test_installable_app_assets_are_available(self):
+        client = self.app.test_client()
+        manifest_response = client.get("/static/manifest.json")
+        self.assertEqual(manifest_response.status_code, 200)
+        manifest = json.loads(manifest_response.data)
+        manifest_response.close()
+        self.assertEqual(manifest["display"], "standalone")
+        self.assertEqual(manifest["start_url"], "/")
+        for icon in manifest["icons"]:
+            icon_response = client.get(icon["src"])
+            self.assertEqual(icon_response.status_code, 200)
+            icon_response.close()
+
+        worker_response = client.get("/service-worker.js")
+        self.assertEqual(worker_response.status_code, 200)
+        self.assertEqual(
+            worker_response.headers["Service-Worker-Allowed"], "/")
+        self.assertIn(b"/static/", worker_response.data)
+        worker_response.close()
+
+    def test_apps_script_delivery_uses_signed_https_request(self):
+        self.app.config.update(
+            MAIL_MODE="apps-script",
+            MAIL_WEB_APP_URL="https://script.example.test/exec",
+            MAILER_SECRET="test-mailer-secret",
+        )
+        user_id = self.create_user(
+            "Applicant", "applicant", "applicant@example.test",
+            approved=0, verified=0,
+        )
+        admin = self.app.test_client()
+        self.sign_in_session(admin, self.admin, role="admin")
+
+        with patch("app.urllib.request.urlopen") as send_request:
+            send_request.return_value.__enter__.return_value.read.return_value = (
+                b'{"ok":true}'
+            )
+            response = admin.post(
+                f"/admin/users/{user_id}/approve",
+                data={"csrf_token": "test-csrf-token"},
+            )
+
+        self.assertEqual(response.status_code, 302)
+        request = send_request.call_args.args[0]
+        self.assertEqual(request.full_url, "https://script.example.test/exec")
+        envelope = json.loads(request.data)
+        payload = json.loads(envelope["payload"])
+        expected_signature = hmac.new(
+            b"test-mailer-secret",
+            envelope["payload"].encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        self.assertEqual(envelope["signature"], expected_signature)
+        self.assertEqual(payload["to"], "applicant@example.test")
+        self.assertRegex(payload["code"], r"^\d{1,6}$")
+        send_request.assert_called_once()
+
     def test_signup_waits_for_admin_approval_and_email_code(self):
         applicant = self.app.test_client()
         self.sign_in_session(applicant, 0)
@@ -77,6 +139,9 @@ class MoneylineTests(unittest.TestCase):
                 data={"csrf_token": "test-csrf-token"},
             )
         self.assertEqual(response.status_code, 302)
+        approval_page = admin.get(response.location)
+        self.assertIn(b"Local mode did not send email", approval_page.data)
+        self.assertIn(b"app server terminal", approval_page.data)
         match = re.search(
             r"code for .*: (\d{1,6})", "\n".join(captured.output))
         self.assertIsNotNone(match)

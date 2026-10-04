@@ -4,12 +4,20 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="csrf-token" content="{{ csrf_token }}" />
-    <meta name="theme-color" content="#f5f5ef" />
+    <meta name="theme-color" content="#111914" />
+    <link
+      rel="manifest"
+      href="{{ url_for('static', filename='manifest.json') }}"
+    />
+    <link
+      rel="apple-touch-icon"
+      href="{{ url_for('static', filename='icon-192.png') }}"
+    />
     <title>{% block title %}Moneyline{% endblock %} · Moneyline</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Fraunces:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap"
       rel="stylesheet"
     />
     <link
@@ -28,19 +36,26 @@
         <span class="brand-mark">m</span
         ><span>moneyline<span class="brand-period">.</span></span>
       </a>
-      {% if session.get('user_id') %}
       <div class="topbar-right">
-        {% if session.get('role') == 'admin' %}<span class="role-label"
-          >ADMINISTRATOR</span
-        >{% endif %}
+        <button
+          class="button button-outline button-small"
+          id="install-app"
+          type="button"
+          title="Install Moneyline on this device"
+          hidden
+        >
+          Install app <span aria-hidden="true">↓</span>
+        </button>
+        {% if session.get('user_id') %} {% if session.get('role') == 'admin'
+        %}<span class="role-label">ADMINISTRATOR</span>{% endif %}
         <form method="post" action="{{ url_for('logout') }}">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
           <button class="button button-quiet button-small" type="submit">
             Sign out <span aria-hidden="true">↗</span>
           </button>
         </form>
+        {% endif %}
       </div>
-      {% endif %}
     </header>
     {% with messages = get_flashed_messages(with_categories=true) %} {% if
     messages %}
@@ -52,5 +67,6 @@
     {% endif %} {% endwith %}
     <main>{% block content %}{% endblock %}</main>
     {% block scripts %}{% endblock %}
+    <script src="{{ url_for('static', filename='pwa.js') }}" defer></script>
   </body>
 </html>
