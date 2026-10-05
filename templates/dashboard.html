@@ -186,6 +186,30 @@
       </p>
     </section>
   </div>
+  <section class="ledger-panel leaderboard-panel">
+    <div class="section-heading">
+      <div>
+        <p class="eyebrow">COMMUNITY RANKING</p>
+        <h2>Leaderboard</h2>
+      </div>
+      <p class="table-note">Each transaction earns 10 points</p>
+    </div>
+    <div class="table-scroll">
+      <table class="ledger-table">
+        <thead>
+          <tr>
+            <th>RANK</th>
+            <th>USERNAME</th>
+            <th class="amount-col">POINTS</th>
+          </tr>
+        </thead>
+        <tbody id="leaderboard-rows">
+          <tr><td colspan="3" class="empty-row">Loading rankings...</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="table-note" id="leaderboard-position"></p>
+  </section>
 </div>
 {% endblock %} {% block scripts %}
 <script src="{{ url_for('static', filename='dashboard.js') }}" defer></script>

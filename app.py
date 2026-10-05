@@ -1,17 +1,10 @@
 import csv
-import hashlib
-import hmac
 import io
-import json
 import os
 import secrets
-import smtplib
 import sqlite3
-import time
-import urllib.request
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
-from email.message import EmailMessage
 from functools import wraps
 
 import psycopg
@@ -20,6 +13,7 @@ from flask import (
     Flask,
     Response,
     abort,
+    current_app,
     flash,
     g,
     jsonify,
@@ -57,7 +51,7 @@ class DatabaseConnection:
 
 def get_db():
     if "db" not in g:
-        database_url = os.environ.get("DATABASE_URL", "").strip()
+        database_url = current_app.config.get("DATABASE_URL", "").strip()
 
         if database_url:
             connection = psycopg.connect(
@@ -68,8 +62,9 @@ def get_db():
             g.db = DatabaseConnection(connection, postgres=True)
         else:
             connection = sqlite3.connect(
-                os.environ.get("DATABASE_PATH", "money_tracker.sqlite3")
+                current_app.config["DATABASE"]
             )
+            connection.execute("PRAGMA foreign_keys = ON")
             connection.row_factory = sqlite3.Row
             g.db = DatabaseConnection(connection, postgres=False)
 
@@ -90,7 +85,8 @@ def init_db():
                 password_hash TEXT NOT NULL,
                 role TEXT NOT NULL DEFAULT 'user',
                 approved INTEGER NOT NULL DEFAULT 0,
-                verified INTEGER NOT NULL DEFAULT 0,
+                verified INTEGER NOT NULL DEFAULT 1,
+                blocked INTEGER NOT NULL DEFAULT 0,
                 verification_hash TEXT,
                 verification_expires_at TEXT,
                 verification_attempts INTEGER NOT NULL DEFAULT 0,
@@ -123,7 +119,8 @@ def init_db():
                 password_hash TEXT NOT NULL,
                 role TEXT NOT NULL DEFAULT 'user',
                 approved INTEGER NOT NULL DEFAULT 0,
-                verified INTEGER NOT NULL DEFAULT 0,
+                verified INTEGER NOT NULL DEFAULT 1,
+                blocked INTEGER NOT NULL DEFAULT 0,
                 verification_hash TEXT,
                 verification_expires_at TEXT,
                 verification_attempts INTEGER NOT NULL DEFAULT 0,
@@ -147,7 +144,26 @@ def init_db():
             """
         )
 
+    if db.postgres:
+        db.execute(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS blocked INTEGER NOT NULL DEFAULT 0"
+        )
+    else:
+        columns = db.execute("PRAGMA table_info(users)").fetchall()
+        if not any(column["name"] == "blocked" for column in columns):
+            db.execute(
+                "ALTER TABLE users ADD COLUMN blocked INTEGER NOT NULL DEFAULT 0"
+            )
+
+    db.execute(
+        "UPDATE users SET verified = 1, verification_hash = NULL, "
+        "verification_expires_at = NULL, verification_attempts = 0 "
+        "WHERE role = 'user' AND verified = 0"
+    )
+
     db.commit()
+    db.close()
+    g.pop("db", None)
 
 
 def create_app(test_config=None):
@@ -157,14 +173,6 @@ def create_app(test_config=None):
         SECRET_KEY=os.environ.get("SECRET_KEY") or secrets.token_hex(32),
         DATABASE=os.environ.get("DATABASE_PATH", "money_tracker.sqlite3"),
         DATABASE_URL=os.environ.get("DATABASE_URL", ""),
-        MAIL_MODE=os.environ.get("MAIL_MODE", "console"),
-        MAIL_HOST=os.environ.get("MAIL_HOST", ""),
-        MAIL_PORT=int(os.environ.get("MAIL_PORT", "587")),
-        MAIL_USERNAME=os.environ.get("MAIL_USERNAME", ""),
-        MAIL_PASSWORD=os.environ.get("MAIL_PASSWORD", ""),
-        MAIL_FROM=os.environ.get("MAIL_FROM", ""),
-        MAIL_WEB_APP_URL=os.environ.get("MAIL_WEB_APP_URL", ""),
-        MAILER_SECRET=os.environ.get("MAILER_SECRET", ""),
         ADMIN_SETUP_KEY=os.environ.get("ADMIN_SETUP_KEY", ""),
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
@@ -216,6 +224,15 @@ def create_app(test_config=None):
             if "user_id" not in session:
                 return redirect(url_for("login"))
 
+            user = get_db().execute(
+                "SELECT blocked FROM users WHERE id = ?",
+                (session["user_id"],),
+            ).fetchone()
+            if user is None or user["blocked"]:
+                session.clear()
+                flash("This account is unavailable. Contact an administrator.", "error")
+                return redirect(url_for("login"))
+
             return view(*args, **kwargs)
 
         return wrapped
@@ -229,126 +246,24 @@ def create_app(test_config=None):
             if session.get("role") != "admin":
                 abort(403)
 
+            user = get_db().execute(
+                "SELECT blocked FROM users WHERE id = ?",
+                (session["user_id"],),
+            ).fetchone()
+            if user is None or user["blocked"]:
+                session.clear()
+                return redirect(url_for("login"))
+
             return view(*args, **kwargs)
 
         return wrapped
 
-    def send_verification_code(recipient, code):
-        if app.config["MAIL_MODE"] == "console":
-            app.logger.warning(
-                "Development verification code for %s: %s",
-                recipient,
-                code,
-            )
-            return
-
-        if app.config["MAIL_MODE"] == "apps-script":
-            web_app_url = app.config["MAIL_WEB_APP_URL"]
-            secret = app.config["MAILER_SECRET"]
-
-            if not web_app_url or not secret:
-                raise RuntimeError(
-                    "Apps Script mail delivery is not configured."
-                )
-
-            timestamp = str(int(time.time()))
-
-            payload = json.dumps(
-                {
-                    "to": recipient,
-                    "code": code,
-                    "timestamp": timestamp,
-                },
-                separators=(",", ":"),
-            )
-
-            signature = hmac.new(
-                secret.encode("utf-8"),
-                payload.encode("utf-8"),
-                hashlib.sha256,
-            ).hexdigest()
-
-            body = json.dumps(
-                {
-                    "payload": payload,
-                    "signature": signature,
-                }
-            ).encode("utf-8")
-
-            mail_request = urllib.request.Request(
-                web_app_url,
-                data=body,
-                headers={
-                    "Content-Type": "application/json"
-                },
-                method="POST",
-            )
-
-            try:
-                with urllib.request.urlopen(
-                    mail_request,
-                    timeout=15,
-                ) as response:
-                    result = json.loads(
-                        response.read().decode("utf-8")
-                    )
-
-            except (OSError, json.JSONDecodeError) as error:
-                raise RuntimeError(
-                    "Apps Script mail delivery request failed."
-                ) from error
-
-            if not result.get("ok"):
-                raise RuntimeError(
-                    "Apps Script did not accept the email."
-                )
-
-            return
-
-        required = (
-            "MAIL_HOST",
-            "MAIL_USERNAME",
-            "MAIL_PASSWORD",
-            "MAIL_FROM",
-        )
-
-        if any(not app.config[key] for key in required):
-            raise RuntimeError(
-                "Email delivery is not configured. "
-                "Set the MAIL_* environment variables."
-            )
-
-        message = EmailMessage()
-        message["Subject"] = "Your Moneyline verification code"
-        message["From"] = app.config["MAIL_FROM"]
-        message["To"] = recipient
-
-        message.set_content(
-            f"Your account verification code is {code}. "
-            "It expires in 15 minutes. "
-            "If you did not request an account, you can ignore this email."
-        )
-
-        with smtplib.SMTP(
-            app.config["MAIL_HOST"],
-            app.config["MAIL_PORT"],
-        ) as server:
-            server.starttls()
-            server.login(
-                app.config["MAIL_USERNAME"],
-                app.config["MAIL_PASSWORD"],
-            )
-            server.send_message(message)
-
-    def ensure_verified_user():
+    def ensure_active_user():
         if session.get("role") == "admin":
             return
 
-        if not session.get("verified"):
-            abort(403, "Your account must be verified.")
-
         user = get_db().execute(
-            "SELECT verified FROM users WHERE id = ?",
+            "SELECT blocked FROM users WHERE id = ?",
             (session["user_id"],),
         ).fetchone()
 
@@ -356,9 +271,9 @@ def create_app(test_config=None):
             session.clear()
             abort(403, "Account not found.")
 
-        if not user["verified"]:
-            session["verified"] = False
-            abort(403, "Your account must be verified.")
+        if user["blocked"]:
+            session.clear()
+            abort(403, "This account is unavailable.")
 
     @app.get("/service-worker.js")
     def service_worker():
@@ -374,9 +289,6 @@ def create_app(test_config=None):
 
         if session.get("role") == "admin":
             return redirect(url_for("admin_dashboard"))
-
-        if not session.get("verified"):
-            return redirect(url_for("pending"))
 
         return redirect(url_for("dashboard"))
 
@@ -407,7 +319,7 @@ def create_app(test_config=None):
 
             elif "@" not in email or len(email) > 254:
                 flash(
-                    "Enter a valid email address for your verification code.",
+                    "Enter a valid email address.",
                     "error",
                 )
 
@@ -422,8 +334,8 @@ def create_app(test_config=None):
                     cursor = get_db().execute(
                         """
                         INSERT INTO users
-                        (name, username, email, password_hash)
-                        VALUES (?, ?, ?, ?)
+                        (name, username, email, password_hash, verified)
+                        VALUES (?, ?, ?, ?, 1)
                         RETURNING id
                         """,
                         (
@@ -449,10 +361,8 @@ def create_app(test_config=None):
                     session.clear()
                     session["user_id"] = new_user_id
                     session["role"] = "user"
-                    session["verified"] = False
                     session["csrf_token"] = secrets.token_urlsafe(32)
-
-                    return redirect(url_for("pending"))
+                    return redirect(url_for("dashboard"))
 
         return render_template("register.html")
 
@@ -470,8 +380,8 @@ def create_app(test_config=None):
             )
 
             user = get_db().execute(
-                "SELECT * FROM users WHERE username = ?",
-                (username,),
+                "SELECT * FROM users WHERE username = ? OR email = ?",
+                (username, username),
             ).fetchone()
 
             if (
@@ -486,11 +396,13 @@ def create_app(test_config=None):
                     "error",
                 )
 
+            elif user["blocked"]:
+                flash("This account is unavailable. Contact an administrator.", "error")
+
             else:
                 session.clear()
                 session["user_id"] = user["id"]
                 session["role"] = user["role"]
-                session["verified"] = bool(user["verified"])
                 session["csrf_token"] = secrets.token_urlsafe(32)
 
                 return redirect(url_for("index"))
@@ -503,130 +415,11 @@ def create_app(test_config=None):
         session.clear()
         return redirect(url_for("login"))
 
-    @app.get("/pending")
-    @login_required
-    def pending():
-        if session.get("role") == "admin":
-            return redirect(url_for("admin_dashboard"))
-
-        user = get_db().execute(
-            "SELECT approved, verified FROM users WHERE id = ?",
-            (session["user_id"],),
-        ).fetchone()
-
-        if user is None:
-            session.clear()
-            return redirect(url_for("login"))
-
-        if user["verified"]:
-            session["verified"] = True
-            return redirect(url_for("dashboard"))
-
-        return render_template(
-            "pending.html",
-            approved=bool(user["approved"]),
-        )
-
-    @app.route("/verify", methods=["GET", "POST"])
-    @login_required
-    def verify():
-        if session.get("role") == "admin":
-            return redirect(url_for("admin_dashboard"))
-
-        user = get_db().execute(
-            "SELECT * FROM users WHERE id = ?",
-            (session["user_id"],),
-        ).fetchone()
-
-        if user is None:
-            session.clear()
-            return redirect(url_for("login"))
-
-        if user["verified"]:
-            return redirect(url_for("dashboard"))
-
-        if not user["approved"]:
-            return redirect(url_for("pending"))
-
-        if request.method == "POST":
-            code = request.form.get(
-                "code",
-                "",
-            ).strip()
-
-            now = datetime.now(timezone.utc)
-
-            expiry = (
-                datetime.fromisoformat(
-                    user["verification_expires_at"]
-                )
-                if user["verification_expires_at"]
-                else now
-            )
-
-            if (
-                user["verification_attempts"] >= 5
-                or expiry <= now
-                or not user["verification_hash"]
-            ):
-                flash(
-                    "This code has expired or too many attempts "
-                    "were made. Ask an administrator to resend it.",
-                    "error",
-                )
-
-            elif check_password_hash(
-                user["verification_hash"],
-                code,
-            ):
-                get_db().execute(
-                    """
-                    UPDATE users
-                    SET verified = 1,
-                        verification_hash = NULL,
-                        verification_expires_at = NULL
-                    WHERE id = ?
-                    """,
-                    (user["id"],),
-                )
-
-                get_db().commit()
-
-                session["verified"] = True
-
-                return redirect(url_for("dashboard"))
-
-            else:
-                get_db().execute(
-                    """
-                    UPDATE users
-                    SET verification_attempts =
-                        verification_attempts + 1
-                    WHERE id = ?
-                    """,
-                    (user["id"],),
-                )
-
-                get_db().commit()
-
-                flash(
-                    "That code is not correct.",
-                    "error",
-                )
-
-        return render_template(
-            "verify.html",
-            email=user["email"],
-        )
-
     @app.get("/dashboard")
     @login_required
     def dashboard():
         if session.get("role") == "admin":
             return redirect(url_for("admin_dashboard"))
-
-        if not session.get("verified"):
-            return redirect(url_for("pending"))
 
         user = get_db().execute(
             """
@@ -645,7 +438,7 @@ def create_app(test_config=None):
     @app.get("/api/summary")
     @login_required
     def api_summary():
-        ensure_verified_user()
+        ensure_active_user()
 
         db = get_db()
         user_id = session["user_id"]
@@ -686,4 +479,197 @@ def create_app(test_config=None):
             (user_id,),
         ).fetchall()
 
-        months = db.execute()
+        monthly = db.execute(
+            "SELECT monthly_budget_cents FROM users WHERE id = ?",
+            (user_id,),
+        ).fetchone()
+        now = datetime.now(timezone.utc)
+        month_start = now.replace(
+            day=1, hour=0, minute=0, second=0, microsecond=0)
+        six_months_ago = (month_start.year * 12 + month_start.month - 6)
+        start_year, start_month_index = divmod(six_months_ago - 1, 12)
+        start_month = f"{start_year:04d}-{start_month_index + 1:02d}-01T00:00:00+00:00"
+        months = db.execute(
+            "SELECT substr(created_at, 1, 7) AS month, direction, SUM(amount_cents) AS total "
+            "FROM transactions WHERE user_id = ? AND created_at >= ? "
+            "GROUP BY substr(created_at, 1, 7), direction ORDER BY month",
+            (user_id, start_month),
+        ).fetchall()
+        monthly_spent = db.execute(
+            "SELECT COALESCE(SUM(amount_cents), 0) AS total FROM transactions "
+            "WHERE user_id = ? AND direction = 'used' AND created_at >= ?",
+            (user_id, month_start.isoformat()),
+        ).fetchone()["total"]
+        transactions = db.execute(
+            "SELECT direction, amount_cents, purpose, created_at FROM transactions "
+            "WHERE user_id = ? ORDER BY created_at DESC LIMIT 100",
+            (user_id,),
+        ).fetchall()
+
+        return jsonify(
+            received=received,
+            spent=spent,
+            balance=received - spent,
+            monthly_budget=monthly["monthly_budget_cents"] or 0,
+            monthly_spent=monthly_spent,
+            purposes=[dict(row) for row in purposes],
+            months=[dict(row) for row in months],
+            transactions=[dict(row) for row in transactions],
+        )
+
+    @app.get("/api/leaderboard")
+    @login_required
+    def api_leaderboard():
+        if session.get("role") != "user":
+            abort(403)
+
+        rows = get_db().execute(
+            """
+            SELECT users.id, users.username, COUNT(transactions.id) * 10 AS points
+            FROM users
+            LEFT JOIN transactions ON transactions.user_id = users.id
+            WHERE users.role = 'user' AND users.blocked = 0
+            GROUP BY users.id, users.username, users.created_at
+            ORDER BY points DESC, users.created_at ASC, users.id ASC
+            """
+        ).fetchall()
+        ranked = [
+            {"rank": index + 1,
+                "username": row["username"], "points": row["points"]}
+            for index, row in enumerate(rows)
+        ]
+        current_user = next(
+            (item for item, row in zip(ranked, rows)
+             if row["id"] == session["user_id"]),
+            None,
+        )
+        return jsonify(leaders=ranked[:10], current_user=current_user)
+
+    @app.post("/api/transactions")
+    @login_required
+    def api_add_transaction():
+        ensure_active_user()
+        payload = request.get_json(silent=True) or {}
+        direction = payload.get("direction")
+        purpose = str(payload.get("purpose", "")).strip()
+        try:
+            amount = Decimal(str(payload.get("amount", ""))).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+            cents = int(amount * 100)
+        except (InvalidOperation, ValueError):
+            return jsonify(error="Enter a valid amount."), 400
+        if direction not in ("received", "used"):
+            return jsonify(error="Choose money received or money used."), 400
+        if cents <= 0 or cents > 10_000_000_000:
+            return jsonify(error="Enter an amount greater than zero and below 100,000,000."), 400
+        if not purpose or len(purpose) > 120:
+            return jsonify(error="Add a purpose of 1 to 120 characters."), 400
+        db = get_db()
+        db.execute(
+            "INSERT INTO transactions (user_id, direction, amount_cents, purpose, created_at) VALUES (?, ?, ?, ?, ?)",
+            (session["user_id"], direction, cents, purpose,
+             datetime.now(timezone.utc).isoformat()),
+        )
+        db.commit()
+        return jsonify(ok=True), 201
+
+    @app.post("/api/budget")
+    @login_required
+    def api_set_budget():
+        ensure_active_user()
+        payload = request.get_json(silent=True) or {}
+        try:
+            amount = Decimal(str(payload.get("amount", ""))).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+            cents = int(amount * 100)
+        except (InvalidOperation, ValueError):
+            return jsonify(error="Enter a valid budget amount."), 400
+        if cents <= 0 or cents > 10_000_000_000:
+            return jsonify(error="Enter a monthly budget greater than zero."), 400
+        db = get_db()
+        db.execute(
+            "UPDATE users SET monthly_budget_cents = ? WHERE id = ?",
+            (cents, session["user_id"]),
+        )
+        db.commit()
+        return jsonify(ok=True), 200
+
+    @app.get("/api/export.csv")
+    @login_required
+    def export_csv():
+        ensure_active_user()
+        rows = get_db().execute(
+            "SELECT direction, amount_cents, purpose, created_at FROM transactions "
+            "WHERE user_id = ? ORDER BY created_at DESC",
+            (session["user_id"],),
+        ).fetchall()
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(("type", "amount", "purpose", "recorded_at_utc"))
+        for row in rows:
+            writer.writerow((
+                row["direction"], f"{row['amount_cents'] / 100:.2f}",
+                row["purpose"], row["created_at"],
+            ))
+        return Response(
+            output.getvalue(),
+            mimetype="text/csv",
+            headers={
+                "Content-Disposition": "attachment; filename=moneyline-transactions.csv"},
+        )
+
+    @app.get("/admin")
+    @admin_required
+    def admin_dashboard():
+        users = get_db().execute(
+            "SELECT id, name, username, email, verified, blocked, created_at "
+            "FROM users WHERE role = 'user' ORDER BY created_at DESC"
+        ).fetchall()
+        return render_template("admin.html", users=users)
+
+    @app.post("/admin/users/<int:user_id>/block")
+    @admin_required
+    def block_user(user_id):
+        db = get_db()
+        cursor = db.execute(
+            "UPDATE users SET blocked = 1 WHERE id = ? AND role = 'user'",
+            (user_id,),
+        )
+        if cursor.rowcount == 0:
+            abort(404)
+        db.commit()
+        flash("Account blocked.", "success")
+        return redirect(url_for("admin_dashboard"))
+
+    @app.post("/admin/users/<int:user_id>/unblock")
+    @admin_required
+    def unblock_user(user_id):
+        db = get_db()
+        cursor = db.execute(
+            "UPDATE users SET blocked = 0 WHERE id = ? AND role = 'user'",
+            (user_id,),
+        )
+        if cursor.rowcount == 0:
+            abort(404)
+        db.commit()
+        flash("Account unblocked.", "success")
+        return redirect(url_for("admin_dashboard"))
+
+    @app.errorhandler(403)
+    def forbidden(_error):
+        return render_template(
+            "error.html",
+            title="Access denied",
+            message="This area is for administrators or signed-in account holders.",
+        ), 403
+
+    return app
+
+
+app = create_app()
+
+
+if __name__ == "__main__":
+    app.run(debug=os.environ.get("FLASK_DEBUG") == "1")

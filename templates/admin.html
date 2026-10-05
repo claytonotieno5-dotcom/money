@@ -11,8 +11,8 @@ content %}
     </div>
   </section>
   <section class="admin-notice">
-    <span class="stamp-dot"></span> Individual transaction details remain
-    private. This view shows account totals and approval status.
+    <span class="stamp-dot"></span> Account access is managed here. Blocked
+    accounts cannot sign in or continue using the ledger.
   </section>
   <section class="admin-table-panel">
     <div class="section-heading">
@@ -27,8 +27,6 @@ content %}
           <tr>
             <th>PERSON</th>
             <th>STATUS</th>
-            <th>MONEY RECEIVED</th>
-            <th>MONEY USED</th>
             <th>JOINED</th>
             <th></th>
           </tr>
@@ -43,87 +41,36 @@ content %}
               >
             </td>
             <td>
-              {% if user.verified %}<span class="status-badge status-active"
-                >Verified</span
-              >{% elif user.approved %}<span class="status-badge status-code"
-                >Code sent</span
-              >{% else %}<span class="status-badge status-pending"
-                >Awaiting approval</span
-              >{% endif %}
-            </td>
-            <td class="money-positive">
-              KSh {{ '%.2f'|format(user.received / 100) }}
-            </td>
-            <td class="money-negative">
-              KSh {{ '%.2f'|format(user.spent / 100) }}
+              {% if user.blocked %}
+              <span class="status-badge status-pending">Blocked</span>
+              {% elif user.verified %}
+              <span class="status-badge status-active">Active</span>
+              {% else %}
+              <span class="status-badge status-code">Email pending</span>
+              {% endif %}
             </td>
             <td>{{ user.created_at[:10] }}</td>
             <td>
-              {% if not user.verified %}
               <form
                 method="post"
-                action="{{ url_for('approve_user', user_id=user.id) }}"
+                action="{{ url_for('unblock_user' if user.blocked else 'block_user', user_id=user.id) }}"
               >
                 <input
                   type="hidden"
                   name="csrf_token"
                   value="{{ csrf_token }}"
                 /><button
-                  class="button button-small {% if user.approved %}button-outline{% else %}button-primary{% endif %}"
+                  class="button button-small {% if user.blocked %}button-primary{% else %}button-outline{% endif %}"
                   type="submit"
                 >
-                  {% if user.approved %}Resend code{% else %}Approve &amp; send
-                  code{% endif %}
+                  {{ 'Unblock' if user.blocked else 'Block user' }}
                 </button>
               </form>
-              {% endif %}
-            </td>
-          </tr>
-          <tr class="admin-detail-row">
-            <td colspan="6">
-              <details>
-                <summary>
-                  View {{ user.transactions|length }} transaction{% if
-                  user.transactions|length != 1 %}s{% endif %} and purposes
-                </summary>
-                {% if user.transactions %}
-                <div class="table-scroll">
-                  <table class="ledger-table detail-table">
-                    <thead>
-                      <tr>
-                        <th>TYPE</th>
-                        <th>PURPOSE</th>
-                        <th>RECORDED (UTC)</th>
-                        <th class="amount-col">AMOUNT</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {% for transaction in user.transactions %}
-                      <tr>
-                        <td>
-                          {{ 'Received' if transaction.direction == 'received'
-                          else 'Used' }}
-                        </td>
-                        <td>{{ transaction.purpose }}</td>
-                        <td>{{ transaction.created_at }}</td>
-                        <td class="amount-col">
-                          KSh {{ '%.2f'|format(transaction.amount_cents / 100)
-                          }}
-                        </td>
-                      </tr>
-                      {% endfor %}
-                    </tbody>
-                  </table>
-                </div>
-                {% else %}
-                <p class="table-note">No transactions recorded.</p>
-                {% endif %}
-              </details>
             </td>
           </tr>
           {% else %}
           <tr>
-            <td colspan="6" class="empty-row">
+            <td colspan="4" class="empty-row">
               No accounts yet. New registrations will appear here.
             </td>
           </tr>

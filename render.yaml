@@ -12,9 +12,3 @@ services:
         sync: false
       - key: COOKIE_SECURE
         value: "1"
-      - key: MAIL_MODE
-        value: apps-script
-      - key: MAIL_WEB_APP_URL
-        sync: false
-      - key: MAILER_SECRET
-        sync: false

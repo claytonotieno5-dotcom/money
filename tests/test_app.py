@@ -1,15 +1,11 @@
-import logging
-import hashlib
-import hmac
 import json
 import os
-import re
 import sqlite3
 import tempfile
 import unittest
 from unittest.mock import patch
 
-from werkzeug.security import generate_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 
 from app import create_app
 
@@ -23,7 +19,6 @@ class MoneylineTests(unittest.TestCase):
             "SECRET_KEY": "test-secret-key",
             "DATABASE": self.database,
             "DATABASE_URL": "",
-            "MAIL_MODE": "console",
         })
         self.admin = self.create_user(
             "admin", "clayton paul otieno", "admin@example.test", role="admin",
@@ -73,46 +68,32 @@ class MoneylineTests(unittest.TestCase):
         self.assertIn(b"/static/", worker_response.data)
         worker_response.close()
 
-    def test_apps_script_delivery_uses_signed_https_request(self):
-        self.app.config.update(
-            MAIL_MODE="apps-script",
-            MAIL_WEB_APP_URL="https://script.example.test/exec",
-            MAILER_SECRET="test-mailer-secret",
-        )
-        user_id = self.create_user(
-            "Applicant", "applicant", "applicant@example.test",
-            approved=0, verified=0,
-        )
-        admin = self.app.test_client()
-        self.sign_in_session(admin, self.admin, role="admin")
-
-        with patch("app.urllib.request.urlopen") as send_request:
-            send_request.return_value.__enter__.return_value.read.return_value = (
-                b'{"ok":true}'
-            )
-            response = admin.post(
-                f"/admin/users/{user_id}/approve",
-                data={"csrf_token": "test-csrf-token"},
-            )
-
-        self.assertEqual(response.status_code, 302)
-        request = send_request.call_args.args[0]
-        self.assertEqual(request.full_url, "https://script.example.test/exec")
-        envelope = json.loads(request.data)
-        payload = json.loads(envelope["payload"])
-        expected_signature = hmac.new(
-            b"test-mailer-secret",
-            envelope["payload"].encode("utf-8"),
-            hashlib.sha256,
-        ).hexdigest()
-        self.assertEqual(envelope["signature"], expected_signature)
-        self.assertEqual(payload["to"], "applicant@example.test")
-        self.assertRegex(payload["code"], r"^\d{1,6}$")
-        send_request.assert_called_once()
-
-    def test_signup_waits_for_admin_approval_and_email_code(self):
+    def test_registration_creates_account_and_opens_dashboard(self):
         applicant = self.app.test_client()
-        self.sign_in_session(applicant, 0)
+        with applicant.session_transaction() as user_session:
+            user_session["csrf_token"] = "test-csrf-token"
+
+        response = applicant.post("/register", data={
+            "csrf_token": "test-csrf-token",
+            "name": "Applicant",
+            "username": "applicant",
+            "email": "applicant@example.test",
+            "password": "a-secure-test-password",
+        })
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.location, "/dashboard")
+        self.assertIn(b"Applicant", applicant.get("/dashboard").data)
+        connection = sqlite3.connect(self.database)
+        verified = connection.execute(
+            "SELECT verified FROM users WHERE username = 'applicant'"
+        ).fetchone()[0]
+        connection.close()
+        self.assertEqual(verified, 1)
+
+    def test_signup_does_not_require_admin_approval_or_email_verification(self):
+        applicant = self.app.test_client()
+        with applicant.session_transaction() as user_session:
+            user_session["csrf_token"] = "test-csrf-token"
         response = applicant.post("/register", data={
             "csrf_token": "test-csrf-token",
             "name": "Student One",
@@ -122,38 +103,110 @@ class MoneylineTests(unittest.TestCase):
             "role": "admin",
         })
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response.location, "/pending")
+        self.assertEqual(response.location, "/dashboard")
 
         connection = sqlite3.connect(self.database)
-        user_id, role, approved, verified = connection.execute(
-            "SELECT id, role, approved, verified FROM users WHERE username = 'student.one'"
+        user_id, role, verified = connection.execute(
+            "SELECT id, role, verified FROM users WHERE username = 'student.one'"
         ).fetchone()
         connection.close()
-        self.assertEqual((role, approved, verified), ("user", 0, 0))
+        self.assertEqual((role, verified), ("user", 1))
+        self.assertIn(b"Student One", applicant.get("/dashboard").data)
 
-        admin = self.app.test_client()
-        self.sign_in_session(admin, self.admin, role="admin")
-        with self.assertLogs("app", level=logging.WARNING) as captured:
-            response = admin.post(
-                f"/admin/users/{user_id}/approve",
-                data={"csrf_token": "test-csrf-token"},
+    def test_login_accepts_email_as_well_as_username(self):
+        connection = sqlite3.connect(self.database)
+        connection.execute(
+            "UPDATE users SET password_hash = ? WHERE id = ?",
+            (generate_password_hash("long-test-password"), self.admin),
+        )
+        connection.commit()
+        connection.close()
+        client = self.app.test_client()
+        with client.session_transaction() as user_session:
+            user_session["csrf_token"] = "test-csrf-token"
+
+        response = client.post("/login", data={
+            "csrf_token": "test-csrf-token",
+            "username": "admin@example.test",
+            "password": "long-test-password",
+        })
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.location, "/")
+        self.assertEqual(client.get("/").location, "/admin")
+
+    def test_admin_bootstrap_promotes_account_matching_default_email(self):
+        self.create_user(
+            "Existing account",
+            "old-admin-name",
+            "claytonotieno5@gmail.com",
+        )
+        import init_admin
+
+        with (
+            patch.object(init_admin, "flask_app", self.app),
+            patch("builtins.input", side_effect=["", "", ""]),
+            patch.object(
+                init_admin.getpass,
+                "getpass",
+                side_effect=["a-new-secure-password", "a-new-secure-password"],
+            ),
+        ):
+            self.assertEqual(init_admin.main(), 0)
+
+        connection = sqlite3.connect(self.database)
+        name, username, role, blocked, password_hash = connection.execute(
+            "SELECT name, username, role, blocked, password_hash FROM users "
+            "WHERE email = 'claytonotieno5@gmail.com'"
+        ).fetchone()
+        connection.close()
+        self.assertEqual((name, username, role, blocked), (
+            "oclayton paul otieno", "oclayton paul otieno", "admin", 0,
+        ))
+        self.assertTrue(check_password_hash(
+            password_hash, "a-new-secure-password"))
+
+    def test_leaderboard_awards_points_per_entry_and_hides_blocked_users(self):
+        first_id = self.create_user("First", "first", "first@example.test")
+        second_id = self.create_user("Second", "second", "second@example.test")
+        blocked_id = self.create_user(
+            "Blocked", "blocked", "blocked@example.test")
+        connection = sqlite3.connect(self.database)
+        for _ in range(2):
+            connection.execute(
+                "INSERT INTO transactions (user_id, direction, amount_cents, purpose, created_at) "
+                "VALUES (?, 'used', 100, 'Entry', '2026-01-01T12:00:00+00:00')",
+                (first_id,),
             )
-        self.assertEqual(response.status_code, 302)
-        approval_page = admin.get(response.location)
-        self.assertIn(b"Local mode did not send email", approval_page.data)
-        self.assertIn(b"app server terminal", approval_page.data)
-        match = re.search(
-            r"code for .*: (\d{1,6})", "\n".join(captured.output))
-        self.assertIsNotNone(match)
-        self.assertGreaterEqual(int(match.group(1)), 1)
-        self.assertLessEqual(int(match.group(1)), 100_000)
+        connection.execute(
+            "INSERT INTO transactions (user_id, direction, amount_cents, purpose, created_at) "
+            "VALUES (?, 'received', 100, 'Entry', '2026-01-01T12:00:00+00:00')",
+            (second_id,),
+        )
+        connection.execute(
+            "UPDATE users SET blocked = 1 WHERE id = ?", (blocked_id,))
+        connection.commit()
+        connection.close()
+        client = self.app.test_client()
+        self.sign_in_session(client, first_id)
 
-        with applicant.session_transaction() as user_session:
-            verification_csrf = user_session["csrf_token"]
-        response = applicant.post(
-            "/verify", data={"csrf_token": verification_csrf, "code": match.group(1)})
-        self.assertEqual(response.status_code, 302)
-        self.assertEqual(response.location, "/dashboard")
+        response = client.get("/api/leaderboard")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["leaders"][0], {
+            "rank": 1, "username": "first", "points": 20,
+        })
+        self.assertEqual(response.json["leaders"][1]["points"], 10)
+        self.assertEqual(response.json["current_user"]["rank"], 1)
+        self.assertNotIn("email", response.json["leaders"][0])
+        self.assertNotIn("blocked", [item["username"]
+                         for item in response.json["leaders"]])
+
+    def test_admin_cannot_access_user_leaderboard(self):
+        client = self.app.test_client()
+        self.sign_in_session(client, self.admin, role="admin")
+
+        self.assertEqual(client.get("/api/leaderboard").status_code, 403)
 
     def test_users_can_only_read_their_own_ledger(self):
         first_id = self.create_user("First", "first", "first@example.test")
@@ -172,14 +225,14 @@ class MoneylineTests(unittest.TestCase):
         self.assertEqual(second.get("/api/summary").json["spent"], 0)
         self.assertNotIn(b"Bus fare", second.get("/api/export.csv").data)
 
-    def test_unverified_user_cannot_access_ledger_api(self):
+    def test_existing_unverified_user_can_access_ledger_api(self):
         user_id = self.create_user(
             "Waiting", "waiting", "waiting@example.test", approved=0, verified=0)
         client = self.app.test_client()
         self.sign_in_session(client, user_id, verified=False)
-        self.assertEqual(client.get("/api/summary").status_code, 403)
+        self.assertEqual(client.get("/api/summary").status_code, 200)
 
-    def test_admin_can_review_transactions_but_user_cannot_open_admin_page(self):
+    def test_admin_can_count_and_block_users_but_user_cannot_open_admin_page(self):
         user_id = self.create_user(
             "Ledger Owner", "owner", "owner@example.test")
         connection = sqlite3.connect(self.database)
@@ -193,10 +246,63 @@ class MoneylineTests(unittest.TestCase):
 
         admin = self.app.test_client()
         self.sign_in_session(admin, self.admin, role="admin")
-        self.assertIn(b"Lunch", admin.get("/admin").data)
+        response = admin.get("/admin")
+        self.assertIn(b"registered accounts", response.data)
+        self.assertIn(b"Block user", response.data)
+        self.assertNotIn(b"Lunch", response.data)
+        response = admin.post(
+            f"/admin/users/{user_id}/block",
+            data={"csrf_token": "test-csrf-token"},
+        )
+        self.assertEqual(response.status_code, 302)
+        connection = sqlite3.connect(self.database)
+        self.assertEqual(
+            connection.execute(
+                "SELECT blocked FROM users WHERE id = ?", (user_id,)
+            ).fetchone()[0],
+            1,
+        )
+        connection.close()
+        self.assertIn(b"Unblock", admin.get("/admin").data)
+
         user = self.app.test_client()
         self.sign_in_session(user, user_id)
         self.assertEqual(user.get("/admin").status_code, 403)
+        self.assertEqual(user.get("/dashboard").status_code, 302)
+
+        response = admin.post(
+            f"/admin/users/{user_id}/unblock",
+            data={"csrf_token": "test-csrf-token"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.sign_in_session(user, user_id)
+        self.assertIn(b"Ledger Owner", user.get("/dashboard").data)
+
+    def test_admin_page_shows_clear_status_badges_for_active_and_blocked_accounts(self):
+        blocked_user_id = self.create_user(
+            "Blocked", "blocked.user", "blocked@example.test"
+        )
+        active_user_id = self.create_user(
+            "Active", "active.user", "active@example.test"
+        )
+        connection = sqlite3.connect(self.database)
+        connection.execute(
+            "UPDATE users SET blocked = 1 WHERE id = ?",
+            (blocked_user_id,),
+        )
+        connection.commit()
+        connection.close()
+
+        admin = self.app.test_client()
+        self.sign_in_session(admin, self.admin, role="admin")
+        response = admin.get("/admin")
+
+        self.assertIn(b"Blocked", response.data)
+        self.assertIn(b"Active", response.data)
+        self.assertNotIn(
+            b"Blocked</span><span class=\"status-badge status-active\">Active</span>",
+            response.data,
+        )
 
 
 if __name__ == "__main__":

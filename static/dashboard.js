@@ -30,8 +30,9 @@ if (dashboard) {
     const ratio = window.devicePixelRatio || 1;
     canvas.width = width * ratio;
     canvas.height = height * ratio;
-    context.scale(ratio, ratio);
-    context.clearRect(0, 0, width, height);
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.setTransform(ratio, 0, 0, ratio, 0, 0);
     const total = items.reduce((sum, item) => sum + item.total, 0);
     empty.hidden = total > 0;
     if (!total) return;
@@ -90,8 +91,9 @@ if (dashboard) {
     const ratio = window.devicePixelRatio || 1;
     canvas.width = width * ratio;
     canvas.height = height * ratio;
-    context.scale(ratio, ratio);
-    context.clearRect(0, 0, width, height);
+    context.setTransform(1, 0, 0, 1, 0, 0);
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.setTransform(ratio, 0, 0, ratio, 0, 0);
 
     const monthMap = new Map(months.map(item => [`${item.month}:${item.direction}`, item.total]));
     const current = new Date();
@@ -160,6 +162,60 @@ if (dashboard) {
     });
   }
 
+  function drawLeaderboard(data) {
+    const leaderboardRows = document.querySelector("#leaderboard-rows");
+    const position = document.querySelector("#leaderboard-position");
+    leaderboardRows.replaceChildren();
+    if (!data.leaders.length) {
+      const row = document.createElement("tr");
+      const cell = document.createElement("td");
+      cell.colSpan = 3;
+      cell.className = "empty-row";
+      cell.textContent = "No rankings yet. Record a transaction to earn points.";
+      row.append(cell);
+      leaderboardRows.append(row);
+    } else {
+      data.leaders.forEach(leader => {
+        const row = document.createElement("tr");
+        const rank = document.createElement("td");
+        const username = document.createElement("td");
+        const points = document.createElement("td");
+        rank.textContent = `#${leader.rank}`;
+        username.textContent = leader.username;
+        points.className = "amount-col";
+        points.textContent = leader.points.toLocaleString();
+        row.append(rank, username, points);
+        leaderboardRows.append(row);
+      });
+    }
+    position.textContent = data.current_user
+      ? `Your rank: #${data.current_user.rank} · ${data.current_user.points.toLocaleString()} points`
+      : "";
+  }
+
+  async function refreshLeaderboard() {
+    try {
+      drawLeaderboard(await requestJson("/api/leaderboard", { headers: {} }));
+    } catch (error) {
+      document.querySelector("#leaderboard-position").textContent = error.message;
+    }
+  }
+
+  async function refreshLiveData() {
+    if (document.visibilityState !== "visible") return;
+    await Promise.all([refresh(), refreshLeaderboard()]);
+  }
+
+  let liveRefreshTimer;
+  function scheduleLiveRefresh() {
+    window.clearTimeout(liveRefreshTimer);
+    if (document.visibilityState !== "visible") return;
+    liveRefreshTimer = window.setTimeout(async () => {
+      await refreshLiveData();
+      scheduleLiveRefresh();
+    }, 5000);
+  }
+
   function render(data) {
     summary = data;
     document.querySelector("#total-received").textContent = money(data.received);
@@ -226,7 +282,7 @@ if (dashboard) {
       event.currentTarget.reset();
       document.querySelector("#amount").focus();
       showNotice("Entry saved to your private ledger.");
-      await refresh();
+      await refreshLiveData();
     } catch (error) {
       showNotice(error.message, true);
     } finally {
@@ -249,5 +305,12 @@ if (dashboard) {
     cancelAnimationFrame(resizeFrame);
     resizeFrame = requestAnimationFrame(() => { if (summary) render(summary); });
   });
-  refresh();
+  document.addEventListener("visibilitychange", () => {
+    window.clearTimeout(liveRefreshTimer);
+    if (document.visibilityState === "visible") {
+      refreshLiveData().finally(scheduleLiveRefresh);
+    }
+  });
+  refreshLiveData();
+  scheduleLiveRefresh();
 }
