@@ -16,7 +16,7 @@ content %}
   <div class="auth-panel">
     <p class="eyebrow">GET STARTED</p>
     <h2>Create account</h2>
-    <form method="post" class="form-stack">
+    <form method="post" class="form-stack" enctype="multipart/form-data">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
       <label
         >Full name<input
@@ -50,6 +50,15 @@ content %}
           minlength="10"
           required
       /></label>
+      <label
+        >Profile photo <span class="label-hint">Optional · PNG, JPEG, or WebP</span>
+        <input
+          type="file"
+          name="profile_picture"
+          accept="image/png,image/jpeg,image/webp"
+          capture="user"
+        />
+      </label>
       <button class="button button-primary" type="submit">
         Create account <span aria-hidden="true">→</span>
       </button>

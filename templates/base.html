@@ -36,6 +36,15 @@
         <span class="brand-mark">m</span
         ><span>moneyline<span class="brand-period">.</span></span>
       </a>
+      {% if session.get('user_id') and session.get('role') == 'user' %}
+      <nav class="primary-nav" aria-label="Main navigation">
+        <a href="{{ url_for('dashboard') }}" {% if active_page == 'dashboard' %}aria-current="page"{% endif %}>Overview</a>
+        <a href="{{ url_for('transactions_page') }}" {% if active_page == 'transactions' %}aria-current="page"{% endif %}>Transactions</a>
+        <a href="{{ url_for('import_page') }}" {% if active_page == 'import' %}aria-current="page"{% endif %}>Scan &amp; import</a>
+        <a href="{{ url_for('assistant_page') }}" {% if active_page == 'assistant' %}aria-current="page"{% endif %}>Voice &amp; coach</a>
+        <a href="{{ url_for('update_profile') }}" {% if active_page == 'profile' %}aria-current="page"{% endif %}>Profile</a>
+      </nav>
+      {% endif %}
       <div class="topbar-right">
         <button
           class="button button-outline button-small"
@@ -46,6 +55,15 @@
         >
           Install app <span aria-hidden="true">↓</span>
         </button>
+        {% if session.get('user_id') and session.get('role') == 'user' %}
+        <a class="topbar-profile" href="{{ url_for('update_profile') }}" aria-label="Open your profile">
+          {% if profile_picture_available %}
+          <img src="{{ url_for('profile_picture') }}" alt="" />
+          {% else %}
+          <span aria-hidden="true">{{ profile_name[:1]|upper }}</span>
+          {% endif %}
+        </a>
+        {% endif %}
         {% if session.get('user_id') %} {% if session.get('role') == 'admin'
         %}<span class="role-label">ADMINISTRATOR</span>{% endif %}
         <form method="post" action="{{ url_for('logout') }}">

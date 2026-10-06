@@ -10,10 +10,10 @@ if (dashboard) {
   let summary;
 
   async function requestJson(url, options = {}) {
-    const response = await fetch(url, {
-      ...options,
-      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken, ...options.headers }
-    });
+    const headers = new Headers(options.headers || {});
+    headers.set("X-CSRF-Token", csrfToken);
+    headers.set("Content-Type", "application/json");
+    const response = await fetch(url, { ...options, headers });
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || "Something went wrong. Please try again.");
     return data;
@@ -30,56 +30,39 @@ if (dashboard) {
     const ratio = window.devicePixelRatio || 1;
     canvas.width = width * ratio;
     canvas.height = height * ratio;
-    context.setTransform(1, 0, 0, 1, 0, 0);
-    context.clearRect(0, 0, canvas.width, canvas.height);
     context.setTransform(ratio, 0, 0, ratio, 0, 0);
+    context.clearRect(0, 0, width, height);
     const total = items.reduce((sum, item) => sum + item.total, 0);
     empty.hidden = total > 0;
     if (!total) return;
-
     const centerX = width / 2;
     const centerY = height / 2;
     const radius = Math.min(width, height) * 0.39;
-    const lineWidth = Math.max(16, radius * 0.27);
     let angle = -Math.PI / 2;
     items.slice(0, 8).forEach((item, index) => {
       const slice = item.total / total * Math.PI * 2;
       context.beginPath();
       context.arc(centerX, centerY, radius, angle, angle + slice - 0.025);
       context.strokeStyle = colors[index % colors.length];
-      context.lineWidth = lineWidth;
-      context.lineCap = "butt";
+      context.lineWidth = Math.max(16, radius * 0.27);
       context.stroke();
       angle += slice;
-      const legendRow = document.createElement("li");
+      const entry = document.createElement("li");
       const swatch = document.createElement("i");
       const label = document.createElement("span");
-      const value = document.createElement("strong");
+      const amount = document.createElement("strong");
       swatch.style.backgroundColor = colors[index % colors.length];
       label.textContent = item.purpose;
-      value.textContent = money(item.total);
-      legendRow.append(swatch, label, value);
-      legend.append(legendRow);
+      amount.textContent = money(item.total);
+      entry.append(swatch, label, amount);
+      legend.append(entry);
     });
     context.fillStyle = "#e5ecd7";
-    context.font = "700 13px 'Manrope', sans-serif";
+    context.font = "700 13px Manrope, sans-serif";
     context.textAlign = "center";
-    context.textBaseline = "middle";
     context.fillText("TOTAL USED", centerX, centerY - 9);
-    context.font = "500 15px 'IBM Plex Mono', monospace";
+    context.font = "500 15px monospace";
     context.fillText(money(total), centerX, centerY + 13);
-    if (items.length > 8) {
-      const extra = items.slice(8).reduce((sum, item) => sum + item.total, 0);
-      const other = document.createElement("li");
-      const swatch = document.createElement("i");
-      const label = document.createElement("span");
-      const value = document.createElement("strong");
-      swatch.style.backgroundColor = colors[8 % colors.length];
-      label.textContent = "Other purposes";
-      value.textContent = money(extra);
-      other.append(swatch, label, value);
-      legend.append(other);
-    }
   }
 
   function drawTrend(months) {
@@ -91,44 +74,33 @@ if (dashboard) {
     const ratio = window.devicePixelRatio || 1;
     canvas.width = width * ratio;
     canvas.height = height * ratio;
-    context.setTransform(1, 0, 0, 1, 0, 0);
-    context.clearRect(0, 0, canvas.width, canvas.height);
     context.setTransform(ratio, 0, 0, ratio, 0, 0);
-
-    const monthMap = new Map(months.map(item => [`${item.month}:${item.direction}`, item.total]));
-    const current = new Date();
+    context.clearRect(0, 0, width, height);
+    const values = new Map(months.map(item => [`${item.month}:${item.direction}`, item.total]));
+    const today = new Date();
     const series = Array.from({ length: 6 }, (_, index) => {
-      const date = new Date(current.getFullYear(), current.getMonth() - 5 + index, 1);
+      const date = new Date(today.getFullYear(), today.getMonth() - 5 + index, 1);
       const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-      return { key, label: date.toLocaleString(undefined, { month: "short" }), received: monthMap.get(`${key}:received`) || 0, used: monthMap.get(`${key}:used`) || 0 };
+      return {
+        label: date.toLocaleString(undefined, { month: "short" }),
+        received: values.get(`${key}:received`) || 0,
+        used: values.get(`${key}:used`) || 0
+      };
     });
+    empty.hidden = series.some(item => item.received || item.used);
     const max = Math.max(1, ...series.flatMap(item => [item.received, item.used]));
-    empty.hidden = series.every(item => !item.received && !item.used);
-    const top = 12;
     const bottom = height - 26;
-    const plotHeight = bottom - top;
+    const plotHeight = bottom - 12;
     const groupWidth = width / series.length;
     const barWidth = Math.min(16, groupWidth * 0.24);
-
-    context.strokeStyle = "#35443a";
-    context.lineWidth = 1;
-    for (let line = 0; line < 4; line += 1) {
-      const y = top + plotHeight * line / 3;
-      context.beginPath();
-      context.moveTo(0, y);
-      context.lineTo(width, y);
-      context.stroke();
-    }
     series.forEach((item, index) => {
       const center = groupWidth * (index + 0.5);
-      const receivedHeight = item.received / max * plotHeight;
-      const usedHeight = item.used / max * plotHeight;
       context.fillStyle = colors[0];
-      context.fillRect(center - barWidth - 2, bottom - receivedHeight, barWidth, receivedHeight);
+      context.fillRect(center - barWidth - 2, bottom - item.received / max * plotHeight, barWidth, item.received / max * plotHeight);
       context.fillStyle = colors[1];
-      context.fillRect(center + 2, bottom - usedHeight, barWidth, usedHeight);
+      context.fillRect(center + 2, bottom - item.used / max * plotHeight, barWidth, item.used / max * plotHeight);
       context.fillStyle = "#a3af9a";
-      context.font = "11px 'Manrope', sans-serif";
+      context.font = "11px Manrope, sans-serif";
       context.textAlign = "center";
       context.fillText(item.label, center, height - 7);
     });
@@ -137,13 +109,7 @@ if (dashboard) {
   function drawTransactions(transactions) {
     rows.replaceChildren();
     if (!transactions.length) {
-      const row = document.createElement("tr");
-      const cell = document.createElement("td");
-      cell.colSpan = 4;
-      cell.className = "empty-row";
-      cell.textContent = "Your first entry will show up here.";
-      row.append(cell);
-      rows.append(row);
+      rows.innerHTML = '<tr><td colspan="5" class="empty-row">Your first entry will show up here.</td></tr>';
       return;
     }
     transactions.forEach(transaction => {
@@ -152,12 +118,31 @@ if (dashboard) {
       const purpose = document.createElement("td");
       const date = document.createElement("td");
       const amount = document.createElement("td");
-      type.innerHTML = transaction.direction === "received" ? '<span class="transaction-type type-received">Received</span>' : '<span class="transaction-type type-used">Used</span>';
+      const actions = document.createElement("td");
+      const badge = document.createElement("span");
+      badge.className = `transaction-type ${transaction.direction === "received" ? "type-received" : "type-used"}`;
+      badge.textContent = transaction.direction === "received" ? "Received" : "Used";
+      type.append(badge);
       purpose.textContent = transaction.purpose;
       date.textContent = new Date(transaction.created_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
       amount.className = `amount-col ${transaction.direction === "received" ? "money-positive" : "money-negative"}`;
       amount.textContent = `${transaction.direction === "received" ? "+" : "−"}${money(transaction.amount_cents)}`;
-      row.append(type, purpose, date, amount);
+      const remove = document.createElement("button");
+      remove.className = "delete-transaction";
+      remove.type = "button";
+      remove.textContent = "Delete";
+      remove.setAttribute("aria-label", `Delete ${transaction.purpose}`);
+      remove.addEventListener("click", async () => {
+        if (!window.confirm("Delete this transaction? This cannot be undone.")) return;
+        try {
+          await requestJson(`/api/transactions/${transaction.id}`, { method: "DELETE" });
+          await refresh();
+        } catch (error) {
+          showNotice(error.message, true);
+        }
+      });
+      actions.append(remove);
+      row.append(type, purpose, date, amount, actions);
       rows.append(row);
     });
   }
@@ -166,54 +151,24 @@ if (dashboard) {
     const leaderboardRows = document.querySelector("#leaderboard-rows");
     const position = document.querySelector("#leaderboard-position");
     leaderboardRows.replaceChildren();
-    if (!data.leaders.length) {
+    data.leaders.forEach(leader => {
       const row = document.createElement("tr");
-      const cell = document.createElement("td");
-      cell.colSpan = 3;
-      cell.className = "empty-row";
-      cell.textContent = "No rankings yet. Record a transaction to earn points.";
-      row.append(cell);
+      const rank = document.createElement("td");
+      const username = document.createElement("td");
+      const points = document.createElement("td");
+      rank.textContent = `#${leader.rank}`;
+      username.textContent = leader.username;
+      points.className = "amount-col";
+      points.textContent = leader.points.toLocaleString();
+      row.append(rank, username, points);
       leaderboardRows.append(row);
-    } else {
-      data.leaders.forEach(leader => {
-        const row = document.createElement("tr");
-        const rank = document.createElement("td");
-        const username = document.createElement("td");
-        const points = document.createElement("td");
-        rank.textContent = `#${leader.rank}`;
-        username.textContent = leader.username;
-        points.className = "amount-col";
-        points.textContent = leader.points.toLocaleString();
-        row.append(rank, username, points);
-        leaderboardRows.append(row);
-      });
+    });
+    if (!data.leaders.length) {
+      leaderboardRows.innerHTML = '<tr><td colspan="3" class="empty-row">No rankings yet.</td></tr>';
     }
     position.textContent = data.current_user
       ? `Your rank: #${data.current_user.rank} · ${data.current_user.points.toLocaleString()} points`
       : "";
-  }
-
-  async function refreshLeaderboard() {
-    try {
-      drawLeaderboard(await requestJson("/api/leaderboard", { headers: {} }));
-    } catch (error) {
-      document.querySelector("#leaderboard-position").textContent = error.message;
-    }
-  }
-
-  async function refreshLiveData() {
-    if (document.visibilityState !== "visible") return;
-    await Promise.all([refresh(), refreshLeaderboard()]);
-  }
-
-  let liveRefreshTimer;
-  function scheduleLiveRefresh() {
-    window.clearTimeout(liveRefreshTimer);
-    if (document.visibilityState !== "visible") return;
-    liveRefreshTimer = window.setTimeout(async () => {
-      await refreshLiveData();
-      scheduleLiveRefresh();
-    }, 5000);
   }
 
   function render(data) {
@@ -221,17 +176,17 @@ if (dashboard) {
     document.querySelector("#total-received").textContent = money(data.received);
     document.querySelector("#total-spent").textContent = money(data.spent);
     document.querySelector("#total-balance").textContent = money(data.balance);
-    const budgetMessage = document.querySelector("#budget-message");
     const progress = document.querySelector("#budget-progress");
-    const budgetInput = document.querySelector("#budget-amount");
+    const input = document.querySelector("#budget-amount");
     if (data.monthly_budget) {
       const percent = Math.round(data.monthly_spent / data.monthly_budget * 100);
-      budgetMessage.textContent = `${money(data.monthly_spent)} of ${money(data.monthly_budget)} used this month${percent > 100 ? " · Budget exceeded" : ` · ${percent}%`}`;
+      document.querySelector("#budget-message").textContent =
+        `${money(data.monthly_spent)} of ${money(data.monthly_budget)} used this month${percent > 100 ? " · Budget exceeded" : ` · ${percent}%`}`;
       progress.style.width = `${Math.min(percent, 100)}%`;
       progress.classList.toggle("is-over", percent >= 90);
-      budgetInput.value = (data.monthly_budget / 100).toFixed(2);
+      input.value = (data.monthly_budget / 100).toFixed(2);
     } else {
-      budgetMessage.textContent = "Set a monthly budget to get started.";
+      document.querySelector("#budget-message").textContent = "Set a monthly budget to get started.";
       progress.style.width = "0%";
     }
     drawDonut(data.purposes);
@@ -239,24 +194,20 @@ if (dashboard) {
     drawTransactions(data.transactions);
   }
 
+  function showNotice(message, isError = false) {
+    const notice = document.querySelector("#form-notice");
+    notice.textContent = message;
+    notice.classList.toggle("is-error", isError);
+  }
+
   async function refresh() {
     try {
       render(await requestJson("/api/summary", { headers: {} }));
+      const leaders = await requestJson("/api/leaderboard", { headers: {} });
+      drawLeaderboard(leaders);
     } catch (error) {
       showNotice(error.message, true);
     }
-  }
-
-  function showNotice(message, isError = false) {
-    let notice = document.querySelector("#form-notice");
-    if (!notice) {
-      notice = document.createElement("p");
-      notice.id = "form-notice";
-      notice.className = "form-note form-response";
-      document.querySelector("#transaction-form").append(notice);
-    }
-    notice.textContent = message;
-    notice.classList.toggle("is-error", isError);
   }
 
   document.querySelectorAll(".segment").forEach(button => {
@@ -277,12 +228,16 @@ if (dashboard) {
     try {
       await requestJson("/api/transactions", {
         method: "POST",
-        body: JSON.stringify({ direction: document.querySelector("#direction").value, amount: document.querySelector("#amount").value, purpose: document.querySelector("#purpose").value })
+        body: JSON.stringify({
+          direction: document.querySelector("#direction").value,
+          amount: document.querySelector("#amount").value,
+          purpose: document.querySelector("#purpose").value
+        })
       });
       event.currentTarget.reset();
       document.querySelector("#amount").focus();
       showNotice("Entry saved to your private ledger.");
-      await refreshLiveData();
+      await refresh();
     } catch (error) {
       showNotice(error.message, true);
     } finally {
@@ -293,7 +248,11 @@ if (dashboard) {
   document.querySelector("#budget-form").addEventListener("submit", async event => {
     event.preventDefault();
     try {
-      await requestJson("/api/budget", { method: "POST", body: JSON.stringify({ amount: document.querySelector("#budget-amount").value }) });
+      await requestJson("/api/budget", {
+        method: "POST",
+        body: JSON.stringify({ amount: document.querySelector("#budget-amount").value })
+      });
+      showNotice("Monthly budget saved.");
       await refresh();
     } catch (error) {
       showNotice(error.message, true);
@@ -305,12 +264,5 @@ if (dashboard) {
     cancelAnimationFrame(resizeFrame);
     resizeFrame = requestAnimationFrame(() => { if (summary) render(summary); });
   });
-  document.addEventListener("visibilitychange", () => {
-    window.clearTimeout(liveRefreshTimer);
-    if (document.visibilityState === "visible") {
-      refreshLiveData().finally(scheduleLiveRefresh);
-    }
-  });
-  refreshLiveData();
-  scheduleLiveRefresh();
+  refresh();
 }

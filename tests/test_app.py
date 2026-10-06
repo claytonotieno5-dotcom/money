@@ -1,4 +1,5 @@
 import json
+import io
 import os
 import sqlite3
 import tempfile
@@ -67,6 +68,57 @@ class MoneylineTests(unittest.TestCase):
             worker_response.headers["Service-Worker-Allowed"], "/")
         self.assertIn(b"/static/", worker_response.data)
         worker_response.close()
+
+    def test_dashboard_renders_navigation_to_personal_pages(self):
+        user_id = self.create_user(
+            "Owner", "owner", "owner@example.test")
+        client = self.app.test_client()
+        self.sign_in_session(client, user_id)
+
+        response = client.get("/dashboard")
+
+        self.assertEqual(response.status_code, 200)
+        for control in (
+            b'href="/transactions"',
+            b'href="/import"',
+            b'href="/assistant"',
+            b'href="/profile"',
+        ):
+            self.assertIn(control, response.data)
+
+    def test_personal_tools_have_separate_navigation_pages(self):
+        user_id = self.create_user("Owner", "owner", "owner@example.test")
+        client = self.app.test_client()
+        self.sign_in_session(client, user_id)
+
+        pages = {
+            "/transactions": (b"Transaction history", b'id="page-transaction-form"'),
+            "/import": (b"Scan &amp; import", b'id="camera-start"', b'id="import-file"'),
+            "/assistant": (
+                b"Voice &amp; coach",
+                b'id="voice-start"',
+                b'id="voice-ask-coach"',
+                b'id="coach-form"',
+            ),
+            "/profile": (b"Profile", b'id="profile-picture"'),
+        }
+        for path, markers in pages.items():
+            with self.subTest(path=path):
+                response = client.get(path)
+                self.assertEqual(response.status_code, 200)
+                for marker in markers:
+                    self.assertIn(marker, response.data)
+                self.assertIn(b'aria-current="page"', response.data)
+
+    def test_admin_is_redirected_from_personal_feature_pages(self):
+        client = self.app.test_client()
+        self.sign_in_session(client, self.admin, role="admin")
+
+        for path in ("/transactions", "/import", "/assistant"):
+            with self.subTest(path=path):
+                response = client.get(path)
+                self.assertEqual(response.status_code, 302)
+                self.assertEqual(response.location, "/admin")
 
     def test_registration_creates_account_and_opens_dashboard(self):
         applicant = self.app.test_client()
@@ -224,6 +276,166 @@ class MoneylineTests(unittest.TestCase):
         self.assertEqual(first.get("/api/summary").json["spent"], 12550)
         self.assertEqual(second.get("/api/summary").json["spent"], 0)
         self.assertNotIn(b"Bus fare", second.get("/api/export.csv").data)
+
+    def test_csv_import_only_previews_until_user_approves_selected_rows(self):
+        first_id = self.create_user("First", "first", "first@example.test")
+        second_id = self.create_user("Second", "second", "second@example.test")
+        first = self.app.test_client()
+        second = self.app.test_client()
+        self.sign_in_session(first, first_id)
+        self.sign_in_session(second, second_id)
+        csv_data = (
+            b"type,amount,purpose,date\n"
+            b"received,1000.50,Salary,2025-12-01\n"
+            b"used,200,Transport,2025-12-03\n"
+            b"unknown,5,Unreadable,2025-12-04\n"
+        )
+
+        preview = first.post(
+            "/api/import/preview",
+            data={"file": (io.BytesIO(csv_data), "budget.csv")},
+            headers={"X-CSRF-Token": "test-csrf-token"},
+        )
+
+        self.assertEqual(preview.status_code, 200)
+        self.assertEqual(preview.json["skipped"], 1)
+        self.assertEqual(len(preview.json["transactions"]), 2)
+        self.assertEqual(first.get("/api/summary").json["received"], 0)
+        self.assertEqual(second.get("/api/summary").json["received"], 0)
+
+        approval = first.post(
+            "/api/transactions/import",
+            json={"transactions": preview.json["transactions"]},
+            headers={"X-CSRF-Token": "test-csrf-token"},
+        )
+
+        self.assertEqual(approval.status_code, 201)
+        self.assertEqual(approval.json["count"], 2)
+        self.assertEqual(first.get("/api/summary").json["received"], 100050)
+        self.assertEqual(first.get("/api/summary").json["spent"], 20000)
+        self.assertEqual(second.get("/api/summary").json["received"], 0)
+
+    def test_ocr_preview_does_not_save_until_approved(self):
+        user_id = self.create_user("Owner", "owner", "owner@example.test")
+        client = self.app.test_client()
+        self.sign_in_session(client, user_id)
+
+        response = client.post(
+            "/api/import/preview",
+            json={"text": "Received 1,500 from salary\nSpent 350 on transport"},
+            headers={"X-CSRF-Token": "test-csrf-token"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["transactions"], [
+            {"direction": "received", "amount": "1500.00", "purpose": "salary", "date": ""},
+            {"direction": "used", "amount": "350.00", "purpose": "transport", "date": ""},
+        ])
+        self.assertEqual(client.get("/api/summary").json["received"], 0)
+
+    def test_import_rejects_invalid_batch_without_partial_writes(self):
+        user_id = self.create_user("Owner", "owner", "owner@example.test")
+        client = self.app.test_client()
+        self.sign_in_session(client, user_id)
+
+        response = client.post(
+            "/api/transactions/import",
+            json={"transactions": [
+                {"direction": "received", "amount": "100", "purpose": "Pay"},
+                {"direction": "unknown", "amount": "1", "purpose": "Invalid"},
+            ]},
+            headers={"X-CSRF-Token": "test-csrf-token"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(client.get("/api/summary").json["received"], 0)
+
+    def test_user_can_delete_only_their_own_transactions(self):
+        owner_id = self.create_user("Owner", "owner", "owner@example.test")
+        other_id = self.create_user("Other", "other", "other@example.test")
+        owner = self.app.test_client()
+        other = self.app.test_client()
+        self.sign_in_session(owner, owner_id)
+        self.sign_in_session(other, other_id)
+        added = owner.post(
+            "/api/transactions",
+            json={"direction": "used", "amount": "12.50", "purpose": "Lunch"},
+            headers={"X-CSRF-Token": "test-csrf-token"},
+        )
+        transaction_id = owner.get("/api/summary").json["transactions"][0]["id"]
+
+        self.assertEqual(added.status_code, 201)
+        self.assertEqual(other.delete(
+            f"/api/transactions/{transaction_id}",
+            headers={"X-CSRF-Token": "test-csrf-token"},
+        ).status_code, 404)
+        self.assertEqual(owner.get("/api/summary").json["spent"], 1250)
+        self.assertEqual(owner.delete(
+            f"/api/transactions/{transaction_id}",
+            headers={"X-CSRF-Token": "test-csrf-token"},
+        ).status_code, 200)
+        self.assertEqual(owner.get("/api/summary").json["spent"], 0)
+
+    def test_profile_photo_is_stored_and_served_only_to_its_owner(self):
+        owner_id = self.create_user("Owner", "owner", "owner@example.test")
+        other_id = self.create_user("Other", "other", "other@example.test")
+        owner = self.app.test_client()
+        other = self.app.test_client()
+        self.sign_in_session(owner, owner_id)
+        self.sign_in_session(other, other_id)
+        png = (
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+            b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
+            b"\x1f\x15\xc4\x89\x00\x00\x00\x0bIDAT\x08\xd7c\xf8\x0f"
+            b"\x00\x01\x01\x01\x00\x18\xdd\x8d\xb4\x00\x00\x00\x00IEND"
+            b"\xaeB`\x82"
+        )
+
+        updated = owner.post(
+            "/profile",
+            data={
+                "csrf_token": "test-csrf-token",
+                "profile_picture": (io.BytesIO(png), "profile.png"),
+            },
+        )
+
+        self.assertEqual(updated.status_code, 302)
+        photo = owner.get("/profile-picture")
+        self.assertEqual(photo.status_code, 200)
+        self.assertEqual(photo.mimetype, "image/png")
+        self.assertEqual(photo.data, png)
+        self.assertEqual(other.get("/profile-picture").status_code, 404)
+
+    def test_financial_coach_uses_users_records_and_rejects_unrelated_questions(self):
+        user_id = self.create_user("Owner", "owner", "owner@example.test")
+        client = self.app.test_client()
+        self.sign_in_session(client, user_id)
+        client.post(
+            "/api/transactions",
+            json={"direction": "received", "amount": "500", "purpose": "Pay"},
+            headers={"X-CSRF-Token": "test-csrf-token"},
+        )
+
+        answer = client.post(
+            "/api/coach",
+            json={"question": "What is my balance?"},
+            headers={"X-CSRF-Token": "test-csrf-token"},
+        )
+        unrelated = client.post(
+            "/api/coach",
+            json={"question": "Tell me a joke"},
+            headers={"X-CSRF-Token": "test-csrf-token"},
+        )
+        unsupported = client.post(
+            "/api/coach",
+            json={"question": "What investment should I make with my money?"},
+            headers={"X-CSRF-Token": "test-csrf-token"},
+        )
+
+        self.assertEqual(answer.status_code, 200)
+        self.assertIn("KES 500.00", answer.json["answer"])
+        self.assertEqual(unrelated.status_code, 400)
+        self.assertIn("cannot provide investment", unsupported.json["answer"])
 
     def test_existing_unverified_user_can_access_ledger_api(self):
         user_id = self.create_user(

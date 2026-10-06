@@ -22,10 +22,27 @@ Open `http://127.0.0.1:5000`. Run `python init_admin.py` to create or reset the 
 - Individual sign-in and server-enforced ownership of transaction and budget data.
 - Immediate ledger access after account creation; no approval or email verification.
 - Money received/used entries with a purpose and automatic UTC timestamp.
+- Separate dashboard, transactions, scan/import, voice/coach, and profile pages with shared navigation.
+- Private profile photos during signup or from the signed-in dashboard.
+- CSV statement imports and on-device photo OCR that prepare an editable preview; only explicitly approved rows are saved.
+- Voice transaction entry with a transcript/details review before saving, plus a private, ledger-based budgeting coach.
+- User-owned transaction deletion with a confirmation prompt.
 - Balance totals, monthly budget progress, spending-by-purpose donut chart, and six-month income/spending chart.
 - CSV export of a personal transaction history.
 - Administrator-only registered-user count and account blocking controls.
 - User leaderboard awards 10 points per recorded transaction and shows usernames only.
+
+## Statement import, photos, and voice
+
+The import tool accepts UTF-8 CSV files with `type` (or `direction`), `amount`, and `purpose` (or `description`) columns. Optional date columns are read when present. It recognizes explicit received/income/credit/deposit and used/expense/debit/withdrawal values; ambiguous or unreadable rows are skipped rather than guessed. Excel workbooks and PDFs are not supported.
+
+Statement photos are processed in the browser with Tesseract.js and English OCR. The browser downloads the OCR library and language data from jsDelivr when a photo is scanned; the photo itself is not sent to Moneyline or that CDN. OCR can miss rows or misread amounts and labels, so compare with the source statement; every detected preview row is editable and must be explicitly approved before it is added. Profile photos are limited to 2 MB and stored with the account.
+
+Voice entry uses the browser's speech-recognition feature where available. The browser speech service is the default and requires the user to confirm that audio may be sent to its provider; on-device recognition is available only in compatible browsers with language support installed. Current Chrome or Edge is recommended. Microphone access requires permission and a secure context (localhost or HTTPS). Browser and device audio cleanup varies, and noise filtering cannot be guaranteed. Only clear statements with a received/used amount and purpose are recognized; the user reviews the editable preview and explicitly approves it before saving. Browsers without speech recognition cannot transcribe audio in this app.
+
+The statement scanner can open a device camera (rear-facing camera preferred) on localhost/HTTPS after permission is granted, capture an image, and run the same on-device OCR preview as a selected photo. Camera access can also be unavailable due to browser, device, or permission restrictions; selecting an existing image remains available.
+
+The Moneyline coach answers questions about the signed-in user's recorded totals and gives basic budgeting prompts. It is not an AI service and does not provide investment, tax, credit, or debt recommendations. It rejects non-ledger questions and does not send ledger data to an external service.
 
 ## Free Live Pilot
 

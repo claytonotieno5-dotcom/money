@@ -1,0 +1,42 @@
+{% extends 'base.html' %}
+{% block title %}Transactions{% endblock %}
+{% block content %}
+<div class="dashboard-shell page-shell" id="transactions-page">
+  <section class="page-heading">
+    <div>
+      <p class="eyebrow">{{ user.name }} · YOUR PRIVATE LEDGER</p>
+      <h1>Transactions</h1>
+      <p class="auth-intro">Add, review, and remove your money records.</p>
+    </div>
+    <a class="button button-outline" href="{{ url_for('export_csv') }}">↓ Export ledger</a>
+  </section>
+  <section class="entry-panel page-card">
+    <div class="section-heading">
+      <div><p class="eyebrow">NEW RECORD</p><h2>Add a transaction</h2></div>
+    </div>
+    <form id="page-transaction-form" class="form-stack">
+      <div class="segmented" role="group" aria-label="Transaction type">
+        <button type="button" class="segment is-selected" data-direction="received" aria-pressed="true">Received</button>
+        <button type="button" class="segment" data-direction="used" aria-pressed="false">Used</button>
+      </div>
+      <label>Amount <span class="label-hint">KES</span><input id="page-amount" type="number" min="0.01" step="0.01" required placeholder="0.00" /></label>
+      <label>Purpose<input id="page-purpose" type="text" maxlength="120" required placeholder="e.g. Salary, groceries" /></label>
+      <button class="button button-primary" type="submit">Add transaction <span aria-hidden="true">＋</span></button>
+      <p id="transaction-status" class="form-note" role="status" aria-live="polite"></p>
+    </form>
+  </section>
+  <section class="ledger-panel page-card">
+    <div class="section-heading">
+      <div><p class="eyebrow">YOUR ACTIVITY</p><h2>Transaction history</h2></div>
+      <span id="transaction-count" class="table-note"></span>
+    </div>
+    <div class="table-scroll">
+      <table class="ledger-table">
+        <thead><tr><th>TYPE</th><th>PURPOSE</th><th>DATE &amp; TIME</th><th class="amount-col">AMOUNT</th><th>ACTION</th></tr></thead>
+        <tbody id="page-transaction-rows"><tr><td colspan="5" class="empty-row">Loading transactions…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='pages.js') }}" defer></script>{% endblock %}

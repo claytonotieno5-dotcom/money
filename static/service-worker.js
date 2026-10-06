@@ -1,8 +1,9 @@
-const CACHE_NAME = "moneyline-static-v1";
+const CACHE_NAME = "moneyline-static-v3";
 const STATIC_ASSETS = [
   "/static/manifest.json",
   "/static/style.css",
   "/static/dashboard.js",
+  "/static/pages.js",
   "/static/pwa.js",
   "/static/icon-192.png",
   "/static/icon-512.png",

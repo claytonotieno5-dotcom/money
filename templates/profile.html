@@ -1,0 +1,29 @@
+{% extends 'base.html' %}
+{% block title %}Your profile{% endblock %}
+{% block content %}
+<div class="dashboard-shell page-shell">
+  <section class="page-heading">
+    <div><p class="eyebrow">YOUR ACCOUNT</p><h1>Profile</h1><p class="auth-intro">Manage your account photo and see your account details.</p></div>
+  </section>
+  <section class="tool-panel profile-page-panel">
+    <div class="section-heading"><div><p class="eyebrow">ACCOUNT DETAILS</p><h2>{{ user.name }}</h2></div></div>
+    <div class="profile-details">
+      {% if user.profile_picture_mime %}
+      <img class="profile-preview profile-large" id="profile-preview" src="{{ url_for('profile_picture') }}" alt="Your profile photo" />
+      {% else %}
+      <div class="profile-preview profile-placeholder profile-large" id="profile-placeholder">{{ user.name[:1]|upper }}</div>
+      <img class="profile-preview profile-large" id="profile-preview" alt="Profile photo preview" hidden />
+      {% endif %}
+      <dl><dt>Username</dt><dd>{{ user.username }}</dd><dt>Email</dt><dd>{{ user.email }}</dd></dl>
+    </div>
+    <form class="profile-form profile-page-form" method="post" action="{{ url_for('update_profile') }}" enctype="multipart/form-data">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}" />
+      <label for="profile-picture">Choose or take a profile photo</label>
+      <input id="profile-picture" type="file" name="profile_picture" accept="image/png,image/jpeg,image/webp" capture="user" required />
+      <p class="form-note">PNG, JPEG, or WebP · 2 MB maximum.</p>
+      <button class="button button-primary" type="submit">Save profile photo</button>
+    </form>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='pages.js') }}" defer></script>{% endblock %}

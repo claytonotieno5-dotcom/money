@@ -1,0 +1,42 @@
+{% extends 'base.html' %}
+{% block title %}Scan and import{% endblock %}
+{% block content %}
+<div class="dashboard-shell page-shell">
+  <section class="page-heading">
+    <div>
+      <p class="eyebrow">PRIVATE STATEMENT SCANNER</p>
+      <h1>Scan &amp; import</h1>
+      <p class="auth-intro">Upload a CSV or use your camera to scan a statement. Review all detected entries before adding them.</p>
+    </div>
+  </section>
+  <section class="tool-panel import-workspace">
+    <div class="section-heading">
+      <div><p class="eyebrow">CHOOSE A SOURCE</p><h2>CSV file or document photo</h2></div>
+    </div>
+    <label class="upload-label" for="import-file">Select a CSV or image from your device</label>
+    <input id="import-file" type="file" accept=".csv,text/csv,image/*" />
+    <div class="camera-actions">
+      <button class="button button-outline" id="camera-start" type="button">Open camera</button>
+      <button class="button button-outline" id="camera-capture" type="button" hidden>Take photo</button>
+      <button class="button button-quiet" id="camera-stop" type="button" hidden>Close camera</button>
+    </div>
+    <div id="camera-view" class="camera-view" hidden>
+      <video id="camera-video" autoplay playsinline muted></video>
+      <canvas id="camera-canvas" hidden></canvas>
+    </div>
+    <p id="camera-status" class="form-note" role="status" aria-live="polite">
+      Allow camera permission when prompted. Camera access requires localhost or HTTPS.
+    </p>
+    <p class="form-note">Photos are processed on this device and are not uploaded. OCR may misread text—compare every preview row against your statement. CSV uploads are limited to 2 MB.</p>
+    <p id="import-status" class="form-note" role="status" aria-live="polite"></p>
+    <div id="import-preview" class="table-scroll" hidden>
+      <table class="ledger-table import-table">
+        <thead><tr><th>ADD</th><th>TYPE</th><th>AMOUNT (KES)</th><th>PURPOSE</th><th>DATE</th></tr></thead>
+        <tbody id="import-rows"></tbody>
+      </table>
+      <button class="button button-primary" id="approve-import" type="button">Approve selected rows</button>
+    </div>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='pages.js') }}" defer></script>{% endblock %}

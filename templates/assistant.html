@@ -1,0 +1,62 @@
+{% extends 'base.html' %}
+{% block title %}Voice and financial coach{% endblock %}
+{% block content %}
+<div class="dashboard-shell page-shell">
+  <section class="page-heading">
+    <div>
+      <p class="eyebrow">A CONVERSATION WITH YOUR LEDGER</p>
+      <h1>Voice &amp; coach</h1>
+      <p class="auth-intro">Speak a transaction for review, or ask about your recorded balance, spending, and budget.</p>
+    </div>
+  </section>
+  <section class="tool-grid assistant-grid">
+    <section class="tool-panel">
+      <div class="section-heading">
+        <div><p class="eyebrow">VOICE TRANSACTION ENTRY</p><h2>Speak clearly</h2></div>
+      </div>
+      <label for="voice-mode">Speech recognition</label>
+      <select id="voice-mode">
+        <option value="browser" selected>Browser speech service (recommended)</option>
+        <option value="local">On-device only (if installed and supported)</option>
+      </select>
+      <label class="consent-label">
+        <input id="voice-service-consent" type="checkbox" />
+        I understand the browser speech service may send audio to its provider.
+      </label>
+      <div class="voice-controls">
+        <button class="button button-primary" id="voice-start" type="button">🎙 Start microphone</button>
+        <button class="button button-outline" id="voice-stop" type="button" disabled>Stop</button>
+      </div>
+      <label for="voice-transcript">Review or correct the transcript</label>
+      <textarea id="voice-transcript" rows="3" maxlength="300" placeholder="Say: I spent 350 shillings on transport"></textarea>
+      <button class="button button-outline" id="voice-review" type="button">Analyze transaction</button>
+      <button class="button button-outline" id="voice-ask-coach" type="button">Ask the money coach with this transcript</button>
+      <div id="voice-preview" class="voice-preview" hidden>
+        <p class="eyebrow">CHECK BEFORE SAVING</p>
+        <label for="voice-direction">Type<select id="voice-direction"><option value="received">Money received</option><option value="used">Money used</option></select></label>
+        <label for="voice-amount">Amount (KES)<input id="voice-amount" type="number" min="0.01" step="0.01" /></label>
+        <label for="voice-purpose">Purpose<input id="voice-purpose" type="text" maxlength="120" /></label>
+        <button class="button button-primary" id="voice-approve" type="button">Approve and save</button>
+      </div>
+      <p id="voice-status" class="form-note" role="status" aria-live="polite">
+        Browser speech services may process audio online. If on-device recognition is unavailable, switch to Browser speech service. Nothing is saved until you approve the preview.
+      </p>
+      <p class="form-note">For best results, use the latest Chrome or Edge, allow microphone access, and open the app at localhost or HTTPS. The browser controls audio cleanup; noise filtering is not guaranteed.</p>
+    </section>
+    <section class="tool-panel">
+      <div class="section-heading">
+        <div><p class="eyebrow">PRIVATE MONEY COACH</p><h2>Ask about your ledger</h2></div>
+      </div>
+      <form id="coach-form">
+        <label for="coach-question">Your money question</label>
+        <textarea id="coach-question" rows="4" maxlength="300" required placeholder="How much of my monthly budget have I used?"></textarea>
+        <button class="button button-primary" type="submit">Ask Moneyline</button>
+      </form>
+      <p id="coach-answer" class="coach-answer" role="status" aria-live="polite">
+        I can explain your recorded totals and give basic budgeting prompts. I do not provide investment, tax, credit, or debt advice.
+      </p>
+    </section>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}<script src="{{ url_for('static', filename='pages.js') }}" defer></script>{% endblock %}
